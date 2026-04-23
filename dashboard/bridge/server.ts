@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from "express";
 import http from "node:http";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import Anthropic from "@anthropic-ai/sdk";
@@ -11,6 +12,8 @@ const FRONTEND_DIST = path.join(WORKSPACE_ROOT, "dashboard", "frontend", "dist")
 const REPO_ENV = path.join(WORKSPACE_ROOT, ".env");
 const REPO_GITIGNORE = path.join(WORKSPACE_ROOT, ".gitignore");
 const PROFILE_PATH = path.join(WORKSPACE_ROOT, ".dashboard", "profile.json");
+const CLAUDE_OAUTH_PATH = path.join(os.homedir(), ".claude", ".credentials.json");
+const OAUTH_BETA_HEADER = "oauth-2025-04-20";
 
 type Profile = {
   firstBoot: boolean;
@@ -57,6 +60,43 @@ function writeEnvFile(env: Record<string, string>): void {
   fs.writeFileSync(REPO_ENV, lines.join("\n") + "\n");
 }
 
+function loadOAuthToken(): string | null {
+  try {
+    const data = JSON.parse(fs.readFileSync(CLAUDE_OAUTH_PATH, "utf-8"));
+    const token = data?.claudeAiOauth?.accessToken;
+    const expiresAt = data?.claudeAiOauth?.expiresAt;
+    if (typeof token !== "string" || !token) return null;
+    if (typeof expiresAt === "number" && expiresAt < Date.now()) return null;
+    return token;
+  } catch {
+    return null;
+  }
+}
+
+type AuthMode = "env-file" | "oauth" | "shell-env" | "none";
+
+function buildAnthropicClient(): { client: Anthropic; mode: AuthMode } | { client: null; mode: "none" } {
+  const envFileKey = loadEnvFile().ANTHROPIC_API_KEY;
+  if (envFileKey) return { client: new Anthropic({ apiKey: envFileKey }), mode: "env-file" };
+
+  const oauth = loadOAuthToken();
+  if (oauth) {
+    return {
+      client: new Anthropic({
+        authToken: oauth,
+        apiKey: null,
+        defaultHeaders: { "anthropic-beta": OAUTH_BETA_HEADER },
+      }),
+      mode: "oauth",
+    };
+  }
+
+  if (process.env.ANTHROPIC_API_KEY) {
+    return { client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }), mode: "shell-env" };
+  }
+  return { client: null, mode: "none" };
+}
+
 function ensureGitignored(): void {
   let gi = fs.existsSync(REPO_GITIGNORE) ? fs.readFileSync(REPO_GITIGNORE, "utf-8") : "";
   const has = gi.split("\n").some((l) => l.trim() === ".env");
@@ -73,7 +113,8 @@ const app = express();
 app.use(express.json({ limit: "20mb" }));
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true, anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY) });
+  const { mode } = buildAnthropicClient();
+  res.json({ ok: true, authMode: mode, anthropicConfigured: mode !== "none" });
 });
 
 app.get("/api/profile", (_req, res) => {
@@ -176,10 +217,13 @@ wss.on("connection", (ws) => {
     if (msg.type === "ping") return;
     if (msg.type !== "prompt") return;
 
-    if (!process.env.ANTHROPIC_API_KEY) {
+    const { client, mode } = buildAnthropicClient();
+    if (!client) {
       send(ws, {
         type: "error",
-        message: "ANTHROPIC_API_KEY not set. Open Credentials and add it.",
+        message:
+          "No Anthropic auth available. Either paste an ANTHROPIC_API_KEY in Credentials, " +
+          "or run `claude login` in this Codespace to use your Claude subscription.",
       });
       send(ws, { type: "done" });
       return;
@@ -189,7 +233,7 @@ wss.on("connection", (ws) => {
     history.push({ role: "user", content: msg.text });
 
     try {
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      void mode;
       const stream = await client.messages.stream({
         model: process.env.AI_OS_MODEL || "claude-opus-4-7",
         max_tokens: 4096,
@@ -243,5 +287,12 @@ wss.on("connection", (ws) => {
 server.listen(PORT, () => {
   console.log(`[ai-os] http+ws on http://localhost:${PORT}`);
   console.log(`[ai-os] workspace: ${WORKSPACE_ROOT}`);
-  console.log(`[ai-os] anthropic: ${process.env.ANTHROPIC_API_KEY ? "configured" : "MISSING — open Credentials"}`);
+  const { mode } = buildAnthropicClient();
+  const human: Record<AuthMode, string> = {
+    "env-file": "API key (from repo .env)",
+    "oauth": "Claude subscription (OAuth from ~/.claude/.credentials.json)",
+    "shell-env": "API key (from shell env / dotfiles)",
+    "none": "MISSING — open Credentials or run `claude login`",
+  };
+  console.log(`[ai-os] anthropic auth: ${human[mode]}`);
 });
