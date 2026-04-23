@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Chat } from "./components/Chat";
 import { Credentials } from "./components/Credentials";
 import type { Profile } from "./types";
@@ -23,12 +23,12 @@ export default function App() {
       .catch(() => setProfile(null));
   }, []);
 
-  function refreshProfile() {
+  const refreshProfile = useCallback(() => {
     fetch("/api/profile")
       .then((r) => r.json())
       .then(setProfile)
       .catch(() => {});
-  }
+  }, []);
 
   return (
     <div className="app">

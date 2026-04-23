@@ -27,8 +27,10 @@ export function Chat({ onProfileMaybeChanged }: { onProfileMaybeChanged: () => v
         setStatus("connected");
       };
       ws.onclose = () => {
-        setStatus("disconnected");
-        wsRef.current = null;
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+          setStatus("disconnected");
+        }
         const delay = Math.min(1000 * 2 ** attempt, 10_000);
         attempt += 1;
         setTimeout(connect, delay);
