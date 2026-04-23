@@ -1,0 +1,12 @@
+{
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [3100],
+  "portsAttributes": {
+    "3100": {
+      "label": "ai-os Dashboard",
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
+    }
+  },
+  "postCreateCommand": "bash scripts/setup.sh"
+}
