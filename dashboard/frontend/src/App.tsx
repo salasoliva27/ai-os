@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Chat } from "./components/Chat";
 import { Credentials } from "./components/Credentials";
+import { WindowShell, type PanelRegistry } from "./components/WindowShell";
+import { WindowManagerProvider, useWindowManager, buildPanelWindow } from "./store/window-store";
+import type { PanelId } from "./types/window";
 import type { Profile } from "./types";
 
-const PANEL_LABELS: Record<string, string> = {
+const PANEL_LABELS: Record<PanelId, string> = {
+  chat: "Chat",
   credentials: "Credentials",
   files: "Files",
   tasks: "Tasks",
@@ -13,8 +17,16 @@ const PANEL_LABELS: Record<string, string> = {
 };
 
 export default function App() {
+  return (
+    <WindowManagerProvider>
+      <Workspace />
+    </WindowManagerProvider>
+  );
+}
+
+function Workspace() {
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [openPanel, setOpenPanel] = useState<string | null>(null);
+  const { layout, dispatch } = useWindowManager();
 
   useEffect(() => {
     fetch("/api/profile")
@@ -30,16 +42,36 @@ export default function App() {
       .catch(() => {});
   }, []);
 
+  const enabled = (profile?.enabledTools as PanelId[] | undefined) || ["credentials"];
+  const visiblePanels: PanelId[] = ["chat", ...enabled.filter((p) => p !== "chat")];
+
+  function openPanel(id: PanelId) {
+    const winId = `win-${id}`;
+    const existing = layout.windows.find((w) => w.id === winId);
+    if (existing) {
+      dispatch({ type: "RESTORE", id: winId });
+      dispatch({ type: "FOCUS", id: winId });
+      return;
+    }
+    dispatch({ type: "ADD", window: buildPanelWindow(id, layout.windows.length) });
+  }
+
+  const panels: PanelRegistry = {
+    chat: { render: () => <Chat onProfileMaybeChanged={refreshProfile} /> },
+    credentials: { render: () => <Credentials /> },
+  };
+
   return (
     <div className="app">
       <header className="topbar">
         <div className="brand">ai-os</div>
         <nav className="panels">
-          {(profile?.enabledTools || ["credentials"]).map((id) => (
+          {visiblePanels.map((id) => (
             <button
               key={id}
               className="panel-btn"
-              onClick={() => setOpenPanel(openPanel === id ? null : id)}
+              onClick={() => openPanel(id)}
+              title={`Open ${PANEL_LABELS[id]}`}
             >
               {PANEL_LABELS[id] || id}
             </button>
@@ -48,35 +80,8 @@ export default function App() {
       </header>
 
       <main className="main">
-        <Chat onProfileMaybeChanged={refreshProfile} />
+        <WindowShell panels={panels} />
       </main>
-
-      {openPanel === "credentials" && (
-        <Credentials onClose={() => setOpenPanel(null)} />
-      )}
-      {openPanel && openPanel !== "credentials" && (
-        <PanelPlaceholder name={openPanel} onClose={() => setOpenPanel(null)} />
-      )}
-    </div>
-  );
-}
-
-function PanelPlaceholder({ name, onClose }: { name: string; onClose: () => void }) {
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>{PANEL_LABELS[name] || name}</h2>
-          <button onClick={onClose}>×</button>
-        </div>
-        <div className="modal-body">
-          <p>
-            This panel is enabled in your profile but not yet implemented.
-            Ask the chat to scaffold it for you, or open <code>dashboard/frontend/src/components/</code>
-            and add a <code>{name[0].toUpperCase() + name.slice(1)}.tsx</code> file.
-          </p>
-        </div>
-      </div>
     </div>
   );
 }

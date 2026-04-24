@@ -7,7 +7,7 @@ const PRESET_KEYS = [
   { key: "GITHUB_TOKEN", label: "GitHub token (PAT)", required: false, help: "Optional. Cross-repo push access." },
 ];
 
-export function Credentials({ onClose }: { onClose: () => void }) {
+export function Credentials() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [savedKeys, setSavedKeys] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -47,67 +47,59 @@ export function Credentials({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>Credentials</h2>
-          <button onClick={onClose}>×</button>
-        </div>
-        <div className="modal-body">
-          <p className="muted">
-            Keys are written to <code>.env</code> at the repo root. The bridge
-            ensures <code>.env</code> is gitignored so nothing is committed.
-          </p>
+    <div className="panel-body">
+      <p className="muted">
+        Keys are written to <code>.env</code> at the repo root. The bridge
+        ensures <code>.env</code> is gitignored so nothing is committed.
+      </p>
 
-          {PRESET_KEYS.map(({ key, label, required, help }) => (
-            <div key={key} className="cred-row">
-              <label>
-                {label} {required && <span className="req">required</span>}
-                {savedKeys.has(key) && <span className="ok">✓ saved</span>}
-              </label>
-              <div className="cred-help">{help}</div>
-              <div className="cred-input">
-                <input
-                  type="password"
-                  placeholder={key}
-                  value={values[key] || ""}
-                  onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
-                />
-                <button
-                  onClick={() => save(key, values[key] || "")}
-                  disabled={busy === key || !(values[key] || "").trim()}
-                >
-                  {busy === key ? "Saving…" : "Save"}
-                </button>
-              </div>
-            </div>
-          ))}
-
-          <hr />
-
-          <h3>Add a custom credential</h3>
-          <div className="cred-row">
-            <div className="cred-input">
-              <input
-                placeholder="MY_API_KEY"
-                value={customKey}
-                onChange={(e) => setCustomKey(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="value"
-                value={customVal}
-                onChange={(e) => setCustomVal(e.target.value)}
-              />
-              <button onClick={saveCustom} disabled={busy !== null || !customKey || !customVal}>
-                Add
-              </button>
-            </div>
+      {PRESET_KEYS.map(({ key, label, required, help }) => (
+        <div key={key} className="cred-row">
+          <label>
+            {label} {required && <span className="req">required</span>}
+            {savedKeys.has(key) && <span className="ok">✓ saved</span>}
+          </label>
+          <div className="cred-help">{help}</div>
+          <div className="cred-input">
+            <input
+              type="password"
+              placeholder={key}
+              value={values[key] || ""}
+              onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
+            />
+            <button
+              onClick={() => save(key, values[key] || "")}
+              disabled={busy === key || !(values[key] || "").trim()}
+            >
+              {busy === key ? "Saving…" : "Save"}
+            </button>
           </div>
+        </div>
+      ))}
 
-          {error && <div className="error">{error}</div>}
+      <hr />
+
+      <h3>Add a custom credential</h3>
+      <div className="cred-row">
+        <div className="cred-input">
+          <input
+            placeholder="MY_API_KEY"
+            value={customKey}
+            onChange={(e) => setCustomKey(e.target.value)}
+          />
+          <input
+            type="password"
+            placeholder="value"
+            value={customVal}
+            onChange={(e) => setCustomVal(e.target.value)}
+          />
+          <button onClick={saveCustom} disabled={busy !== null || !customKey || !customVal}>
+            Add
+          </button>
         </div>
       </div>
+
+      {error && <div className="error">{error}</div>}
     </div>
   );
 }
