@@ -77,6 +77,11 @@ For a fully separate AI repo, keep `template` or `upstream` pointed at
 `https://github.com/salasoliva27/ai-os.git` and set `origin` to the user's own
 repo.
 
+When a user clones directly into a differently named folder such as `my-ai`,
+the launcher automatically renames `origin` to `template` on first run. That
+keeps template updates available while leaving `origin` free for the user's own
+GitHub repo.
+
 On Windows, run `install-desktop.cmd` once after cloning. It creates an `AI OS`
 Desktop shortcut with its own icon; that shortcut still calls this clone's
 `AI OS.cmd`, so every launch checks the template before starting.

@@ -62,6 +62,11 @@ on their own repository. The launcher fetches template updates on startup and
 uses Git merge semantics so user changes are preserved; if tracked files are
 dirty or a merge conflicts, it skips the update.
 
+When a direct clone of `salasoliva27/ai-os` is launched from a differently
+named folder such as `my-ai`, the launcher renames `origin` to `template`.
+That keeps upstream template updates available while reserving `origin` for the
+user's own repo.
+
 ## Adding capabilities later
 
 When the user asks for a new tool or panel:

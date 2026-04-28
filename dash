@@ -23,13 +23,25 @@ load_env_file() {
   echo "• loaded credentials from .env"
 }
 
+is_ai_os_template_url() {
+  printf "%s" "$1" | grep -Eq 'github.com[:/]salasoliva27/ai-os(\.git)?$'
+}
+
 template_remote() {
+  local origin_url repo_name
   if git remote get-url template >/dev/null 2>&1; then
     echo "template"
   elif git remote get-url upstream >/dev/null 2>&1; then
     echo "upstream"
-  elif git remote get-url origin 2>/dev/null | grep -Eq 'github.com[:/]salasoliva27/ai-os(\.git)?$'; then
-    echo "origin"
+  elif origin_url="$(git remote get-url origin 2>/dev/null)" && is_ai_os_template_url "$origin_url"; then
+    repo_name="$(basename "$WORKSPACE_ROOT")"
+    if [ "$repo_name" != "ai-os" ]; then
+      git remote rename origin template 2>/dev/null || true
+      echo "• renamed origin → template so this clone can use its own origin later" >&2
+      echo "template"
+    else
+      echo "origin"
+    fi
   else
     git remote add template https://github.com/salasoliva27/ai-os.git 2>/dev/null || true
     echo "template"
@@ -75,6 +87,26 @@ auto_update_from_template() {
       fi
     fi
   )
+}
+
+kill_port() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    local pid
+    pid="$(lsof -ti :"$port" 2>/dev/null || true)"
+    [ -n "$pid" ] && kill $pid 2>/dev/null || true
+    [ -n "$pid" ] && echo "• killed stale process on :$port"
+  elif command -v netstat >/dev/null 2>&1 && command -v taskkill >/dev/null 2>&1; then
+    local pids
+    pids="$(netstat -ano | grep -E "LISTENING[[:space:]]+[0-9]+$" | grep -E ":$port[[:space:]]" | awk '{print $NF}' | sort -u)"
+    if [ -n "$pids" ]; then
+      for pid in $pids; do
+        taskkill //F //PID "$pid" >/dev/null 2>&1 || true
+      done
+      echo "• killed stale process on :$port"
+    fi
+  fi
+  return 0
 }
 
 ensure_node() {
@@ -140,6 +172,9 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
+kill_port "$PORT"
+sleep 0.3
+
 cd "$WORKSPACE_ROOT/dashboard"
 if [ ! -d node_modules ]; then
   echo "• installing dashboard deps..."
@@ -152,7 +187,7 @@ fi
 
 NEEDS_BUILD=1
 if [ -f frontend/dist/index.html ]; then
-  newest_src="$(find frontend/src frontend/index.html -type f -newer frontend/dist/index.html 2>/dev/null | head -1)"
+  newest_src="$(find frontend/src frontend/public frontend/index.html -type f -newer frontend/dist/index.html 2>/dev/null | head -1)"
   [ -z "$newest_src" ] && NEEDS_BUILD=0
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
