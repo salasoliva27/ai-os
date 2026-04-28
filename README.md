@@ -40,7 +40,8 @@ in the template repo.
 │   └── frontend/        # React + Vite, ~3 components
 ├── dash                 # One-shot launcher: update, install, build, run
 ├── AI OS.cmd            # Windows double-click launcher
-├── install-desktop.cmd  # Windows Desktop shortcut installer
+├── install-desktop.cmd  # Windows Desktop shortcut installer with icon
+├── assets/              # Desktop shortcut icon assets
 ├── scripts/setup.sh     # Dependency install helper
 └── .devcontainer/       # GitHub Codespaces config
 ```
@@ -75,6 +76,10 @@ Git:
 For a fully separate AI repo, keep `template` or `upstream` pointed at
 `https://github.com/salasoliva27/ai-os.git` and set `origin` to the user's own
 repo.
+
+On Windows, run `install-desktop.cmd` once after cloning. It creates an `AI OS`
+Desktop shortcut with its own icon; that shortcut still calls this clone's
+`AI OS.cmd`, so every launch checks the template before starting.
 
 ## License
 
