@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, WebSocket } from "ws";
 import Anthropic from "@anthropic-ai/sdk";
+import { mountAuth } from "./auth.js";
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || process.cwd();
 const PORT = Number(process.env.PORT || 3100);
@@ -112,6 +113,10 @@ function ensureGitignored(): void {
 const app = express();
 app.use(express.json({ limit: "20mb" }));
 
+// Auth gate (no-op when ENFORCE is false — see auth.ts). Mounted BEFORE any
+// routes so cookie-session applies to all of them.
+const auth = mountAuth(app);
+
 app.get("/api/health", (_req, res) => {
   const { mode } = buildAnthropicClient();
   res.json({ ok: true, authMode: mode, anthropicConfigured: mode !== "none" });
@@ -158,7 +163,10 @@ app.get(/^\/(?!api).*/, (_req, res) => {
 });
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+// noServer:true so auth.bindWs handles the upgrade event (validates session
+// cookie before letting the WS through, AND filters to /ws path).
+const wss = new WebSocketServer({ noServer: true });
+auth.bindWs(server, wss, "/ws");
 
 type WsIn =
   | { type: "prompt"; text: string }
