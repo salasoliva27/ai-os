@@ -11,7 +11,7 @@ const TYPE_ICONS: Record<PanelId, string> = {
   research: '?',
 };
 
-export function Taskbar() {
+export function Taskbar({ brand }: { brand: string }) {
   const { layout, dispatch } = useWindowManager();
 
   const open = layout.windows.filter(w => w.visible && !w.minimized);
@@ -79,6 +79,7 @@ export function Taskbar() {
           Reset
         </button>
       </div>
+      <div className="wm-taskbar__brand" aria-hidden="true">{brand}</div>
     </div>
   );
 }

@@ -12,9 +12,10 @@ export type PanelRegistry = Partial<Record<PanelId, PanelRegistryEntry>>;
 
 interface WindowShellProps {
   panels: PanelRegistry;
+  brand: string;
 }
 
-export function WindowShell({ panels }: WindowShellProps) {
+export function WindowShell({ panels, brand }: WindowShellProps) {
   const { layout } = useWindowManager();
 
   function renderWindowContent(win: WindowState) {
@@ -37,7 +38,7 @@ export function WindowShell({ panels }: WindowShellProps) {
           </Window>
         ))}
       </div>
-      <Taskbar />
+      <Taskbar brand={brand} />
     </div>
   );
 }

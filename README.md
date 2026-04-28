@@ -14,17 +14,20 @@ A blank-slate AI workspace template you can clone and shape via conversation.
 ```bash
 git clone https://github.com/salasoliva27/ai-os.git my-ai
 cd my-ai
-./scripts/setup.sh    # installs dashboard + frontend deps
-cd dashboard && npm run dev
+./dash --open
 ```
 
-Open http://localhost:3100. The chat will greet you and ask what you want
-this workspace to be.
+Open http://localhost:3100. First run asks you to name the AI and connect an
+engine. After that, the chat greets you and asks what you want this workspace
+to be.
 
-You'll need an Anthropic API key. Either:
+You'll need either an Anthropic or OpenAI API key. Either:
 
-- Open the **Credentials** panel (top-right), paste the key, save — or
-- Set `ANTHROPIC_API_KEY` in your shell before starting the bridge.
+- Paste it in the first-run setup screen, or
+- Open the **Credentials** panel later and add more keys.
+
+Credentials are written to this clone's gitignored `.env`. They are not stored
+in the template repo.
 
 ## What's in the box
 
@@ -35,7 +38,10 @@ You'll need an Anthropic API key. Either:
 ├── dashboard/
 │   ├── bridge/          # Single-file Express + WS server (bridge/server.ts)
 │   └── frontend/        # React + Vite, ~3 components
-├── scripts/setup.sh     # One-shot dependency install
+├── dash                 # One-shot launcher: update, install, build, run
+├── AI OS.cmd            # Windows double-click launcher
+├── install-desktop.cmd  # Windows Desktop shortcut installer
+├── scripts/setup.sh     # Dependency install helper
 └── .devcontainer/       # GitHub Codespaces config
 ```
 
@@ -51,6 +57,24 @@ to scaffold them and it will.
 The dashboard's behavior is driven by `.dashboard/profile.json`, which the AI
 writes via a special `<<PROFILE: {...}>>` block the bridge intercepts during
 the first conversation.
+
+## Template updates
+
+Each clone can become its own AI without changing `salasoliva27/ai-os`.
+Personal state lives in gitignored files (`.env`, `.dashboard/profile.json`) or
+in commits on that person's own repository.
+
+On every `./dash` launch, ai-os fetches template updates and applies them with
+Git:
+
+- If the clone has no local source commits, it fast-forwards.
+- If the clone has local commits, it attempts a normal merge.
+- If tracked files are dirty or a merge would conflict, it skips the update and
+  keeps the current checkout untouched.
+
+For a fully separate AI repo, keep `template` or `upstream` pointed at
+`https://github.com/salasoliva27/ai-os.git` and set `origin` to the user's own
+repo.
 
 ## License
 

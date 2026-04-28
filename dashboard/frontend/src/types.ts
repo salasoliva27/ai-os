@@ -1,8 +1,10 @@
 export type Profile = {
   firstBoot: boolean;
+  aiName: string | null;
   aiKind: string | null;
   enabledTools: string[];
   systemPromptAdditions: string;
+  defaultEngine: "anthropic" | "openai" | null;
   updatedAt: number;
 };
 

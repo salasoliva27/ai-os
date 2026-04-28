@@ -14,6 +14,6 @@ npm install --silent
 cd ../..
 echo
 echo "✓ done. Start the dashboard with:"
-echo "    cd dashboard && npm run dev"
+echo "    ./dash --open"
 echo
 echo "Then open http://localhost:3100"

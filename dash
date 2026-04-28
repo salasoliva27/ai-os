@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# ai-os launcher — update template, install runtime deps, build UI, start bridge.
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKSPACE_ROOT="${WORKSPACE_ROOT:-$SCRIPT_DIR}"
+PORT="${AI_OS_PORT:-3100}"
+OPEN_BROWSER="${AI_OS_OPEN_BROWSER:-0}"
+if [ "${1:-}" = "--open" ]; then
+  OPEN_BROWSER=1
+  shift
+fi
+export WORKSPACE_ROOT
+export PORT
+
+load_env_file() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  set -a
+  # shellcheck disable=SC1090
+  . "$file"
+  set +a
+  echo "• loaded credentials from .env"
+}
+
+template_remote() {
+  if git remote get-url template >/dev/null 2>&1; then
+    echo "template"
+  elif git remote get-url upstream >/dev/null 2>&1; then
+    echo "upstream"
+  elif git remote get-url origin 2>/dev/null | grep -Eq 'github.com[:/]salasoliva27/ai-os(\.git)?$'; then
+    echo "origin"
+  else
+    git remote add template https://github.com/salasoliva27/ai-os.git 2>/dev/null || true
+    echo "template"
+  fi
+}
+
+auto_update_from_template() {
+  [ "${AI_OS_AUTO_UPDATE:-1}" = "1" ] || return 0
+  [ -d "$WORKSPACE_ROOT/.git" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+
+  (
+    cd "$WORKSPACE_ROOT"
+    local remote remote_ref dirty local_ref base_ref
+    remote="$(template_remote)"
+    echo "• checking ai-os template updates..."
+    git fetch --quiet "$remote" || {
+      echo "  ⚠ could not fetch template updates, continuing offline"
+      return 0
+    }
+    remote_ref="$(git rev-parse --verify "$remote/main" 2>/dev/null || git rev-parse --verify "$remote/master" 2>/dev/null || true)"
+    [ -n "$remote_ref" ] || return 0
+    dirty="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
+    if [ -n "$dirty" ]; then
+      echo "  ⚠ local tracked edits present, skipping template update"
+      return 0
+    fi
+    local_ref="$(git rev-parse HEAD)"
+    base_ref="$(git merge-base HEAD "$remote_ref")"
+    if [ "$local_ref" = "$remote_ref" ]; then
+      echo "  ✓ template up to date"
+    elif [ "$local_ref" = "$base_ref" ]; then
+      git merge --ff-only --quiet "$remote_ref" \
+        && echo "  ✓ updated to $(git rev-parse --short HEAD)" \
+        || echo "  ⚠ fast-forward failed, continuing with current checkout"
+    else
+      echo "  • this AI has local commits; trying non-destructive template merge"
+      if git merge --no-edit --quiet "$remote_ref"; then
+        echo "  ✓ merged template updates"
+      else
+        git merge --abort >/dev/null 2>&1 || true
+        echo "  ⚠ template update has conflicts, continuing without applying it"
+      fi
+    fi
+  )
+}
+
+ensure_node() {
+  if command -v npm >/dev/null 2>&1; then return 0; fi
+  for candidate in \
+    "/c/Program Files/nodejs" \
+    "/c/Program Files (x86)/nodejs" \
+    "$HOME/AppData/Local/Programs/nodejs" \
+    "$HOME/bin/nodejs" \
+    "$HOME/scoop/apps/nodejs/current"; do
+    if [ -x "$candidate/npm.cmd" ] || [ -x "$candidate/npm" ]; then
+      export PATH="$candidate:$PATH"
+      echo "• found node at $candidate"
+      return 0
+    fi
+  done
+
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+      echo "• node not found — installing portable Node.js LTS to ~/bin/nodejs"
+      NODE_VERSION="v20.19.5"
+      NODE_DIR="node-${NODE_VERSION}-win-x64"
+      NODE_URL="https://nodejs.org/dist/${NODE_VERSION}/${NODE_DIR}.zip"
+      TMPDIR="${TMPDIR:-/tmp}"
+      mkdir -p "$HOME/bin"
+      if curl -fsSL "$NODE_URL" -o "$TMPDIR/node.zip" \
+          && unzip -oq "$TMPDIR/node.zip" -d "$TMPDIR/" \
+          && rm -rf "$HOME/bin/nodejs" \
+          && mv "$TMPDIR/$NODE_DIR" "$HOME/bin/nodejs"; then
+        export PATH="$HOME/bin/nodejs:$PATH"
+        rm -f "$TMPDIR/node.zip"
+        echo "  ✓ installed Node.js $NODE_VERSION at ~/bin/nodejs"
+      fi
+      ;;
+    Darwin)
+      command -v brew >/dev/null 2>&1 && brew install node >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+open_browser_when_ready() {
+  [ "$OPEN_BROWSER" = "1" ] || return 0
+  (
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+      sleep 0.5
+    done
+    url="http://localhost:$PORT"
+    case "$(uname -s)" in
+      Darwin) open "$url" >/dev/null 2>&1 || true ;;
+      MINGW*|MSYS*|CYGWIN*) cmd.exe /c start "" "$url" >/dev/null 2>&1 || true ;;
+      *) command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" >/dev/null 2>&1 || true ;;
+    esac
+  ) &
+}
+
+load_env_file "$WORKSPACE_ROOT/.env"
+auto_update_from_template
+ensure_node
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "✗ npm not found. Install Node.js LTS and re-run ./dash" >&2
+  exit 1
+fi
+
+cd "$WORKSPACE_ROOT/dashboard"
+if [ ! -d node_modules ]; then
+  echo "• installing dashboard deps..."
+  npm install --silent
+fi
+if [ ! -d frontend/node_modules ]; then
+  echo "• installing frontend deps..."
+  (cd frontend && npm install --silent)
+fi
+
+NEEDS_BUILD=1
+if [ -f frontend/dist/index.html ]; then
+  newest_src="$(find frontend/src frontend/index.html -type f -newer frontend/dist/index.html 2>/dev/null | head -1)"
+  [ -z "$newest_src" ] && NEEDS_BUILD=0
+fi
+if [ "$NEEDS_BUILD" = "1" ]; then
+  echo "• building frontend..."
+  npm run build:frontend --silent
+else
+  echo "• frontend up to date, skipping build"
+fi
+
+echo "• starting ai-os on http://localhost:$PORT"
+open_browser_when_ready
+exec npx tsx bridge/server.ts

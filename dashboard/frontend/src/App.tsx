@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Chat } from "./components/Chat";
 import { Credentials } from "./components/Credentials";
+import { EngineSetup } from "./components/EngineSetup";
 import { WindowShell, type PanelRegistry } from "./components/WindowShell";
 import { WindowManagerProvider, useWindowManager, buildPanelWindow } from "./store/window-store";
 import type { PanelId } from "./types/window";
@@ -26,24 +27,59 @@ export default function App() {
 
 function Workspace() {
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [engineConfigured, setEngineConfigured] = useState<boolean | null>(null);
+  const [availableEngines, setAvailableEngines] = useState<Array<"anthropic" | "openai">>([]);
   const { layout, dispatch } = useWindowManager();
 
   useEffect(() => {
-    fetch("/api/profile")
+    fetch("/api/health")
       .then((r) => r.json())
-      .then(setProfile)
-      .catch(() => setProfile(null));
+      .then((health) => {
+        setProfile(health.profile || null);
+        setEngineConfigured(Boolean(health.engineConfigured));
+        setAvailableEngines(Array.isArray(health.availableEngines) ? health.availableEngines : []);
+      })
+      .catch(() => {
+        setProfile(null);
+        setEngineConfigured(false);
+      });
   }, []);
 
   const refreshProfile = useCallback(() => {
-    fetch("/api/profile")
+    fetch("/api/health")
       .then((r) => r.json())
-      .then(setProfile)
+      .then((health) => {
+        setProfile(health.profile || null);
+        setEngineConfigured(Boolean(health.engineConfigured));
+        setAvailableEngines(Array.isArray(health.availableEngines) ? health.availableEngines : []);
+      })
       .catch(() => {});
   }, []);
 
+  if (engineConfigured === null) {
+    return <div className="setup setup--loading">Loading...</div>;
+  }
+
+  if (!engineConfigured || !profile?.aiName) {
+    return (
+      <EngineSetup
+        availableEngines={availableEngines}
+        onReady={(nextProfile) => {
+          setProfile(nextProfile);
+          setEngineConfigured(true);
+          setAvailableEngines((current) =>
+            nextProfile.defaultEngine && !current.includes(nextProfile.defaultEngine)
+              ? [...current, nextProfile.defaultEngine]
+              : current
+          );
+        }}
+      />
+    );
+  }
+
   const enabled = (profile?.enabledTools as PanelId[] | undefined) || ["credentials"];
   const visiblePanels: PanelId[] = ["chat", ...enabled.filter((p) => p !== "chat")];
+  const brand = profile?.aiName || profile?.aiKind || "ai-os";
 
   function openPanel(id: PanelId) {
     const winId = `win-${id}`;
@@ -64,7 +100,7 @@ function Workspace() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">ai-os</div>
+        <div className="brand">{brand}</div>
         <nav className="panels">
           {visiblePanels.map((id) => (
             <button
@@ -80,7 +116,7 @@ function Workspace() {
       </header>
 
       <main className="main">
-        <WindowShell panels={panels} />
+        <WindowShell panels={panels} brand={brand} />
       </main>
     </div>
   );

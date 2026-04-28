@@ -1,8 +1,8 @@
 import { useState } from "react";
 
 const PRESET_KEYS = [
-  { key: "ANTHROPIC_API_KEY", label: "Anthropic API key", required: true, help: "Required. Get it at console.anthropic.com → API keys." },
-  { key: "OPENAI_API_KEY", label: "OpenAI API key", required: false, help: "Optional. For tools that use GPT models." },
+  { key: "ANTHROPIC_API_KEY", label: "Anthropic API key", required: false, help: "Enables Claude as an engine." },
+  { key: "OPENAI_API_KEY", label: "OpenAI API key", required: false, help: "Enables OpenAI as an engine." },
   { key: "BRAVE_API_KEY", label: "Brave Search API key", required: false, help: "Optional. Enables the research panel." },
   { key: "GITHUB_TOKEN", label: "GitHub token (PAT)", required: false, help: "Optional. Cross-repo push access." },
 ];

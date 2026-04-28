@@ -5,8 +5,9 @@ Everything else is opt-in via conversation.
 
 ## How this template works
 
-- The dashboard ships with **chat + credentials** only.
-- On first boot, the dashboard's chat asks the user what kind of AI they want.
+- The dashboard ships with **engine setup + chat + credentials** only.
+- On first boot, the setup page asks the user to name the AI and connect either
+  Anthropic or OpenAI credentials. The chat then asks what kind of AI they want.
 - Based on the user's answer, the AI emits a `<<PROFILE: {...}>>` block that
   the bridge intercepts and writes to `.dashboard/profile.json`. That profile
   toggles which UI panels appear and tailors future system prompts.
@@ -17,13 +18,14 @@ Everything else is opt-in via conversation.
 
 If `profile.firstBoot === true`, your first response should:
 
-1. Greet the user and ask what kind of AI they want this to be. Keep it open —
-   one short question, no menus. Examples to suggest only if asked: coding
+1. Greet the user using the AI name already stored in the profile and ask what
+   kind of AI they want this to be. Keep it open — one short question, no
+   menus. Examples to suggest only if asked: coding
    assistant, writing partner, research tool, business operator, learning tutor.
 2. Recommend which panels to enable from this fixed list:
    `credentials` (always on), `files`, `tasks`, `memory`, `calendar`, `research`.
 3. Once the user confirms, emit EXACTLY this line on its own:
-   `<<PROFILE: {"aiKind":"<short-label>","enabledTools":["credentials","files",...],"systemPromptAdditions":"<one-line tailored instruction>","firstBoot":false}>>`
+  `<<PROFILE: {"aiKind":"<short-label>","enabledTools":["credentials","files",...],"systemPromptAdditions":"<one-line tailored instruction>","firstBoot":false}>>`
 4. Follow with a one-line summary of what was enabled.
 
 Do not invent panels not in the list. Do not emit the PROFILE line until the
@@ -47,13 +49,18 @@ via the Credentials panel first.
 ## Running the dashboard
 
 ```bash
-cd dashboard
-npm install
-cd frontend && npm install && cd ..
-npm run dev
+./dash --open
 ```
 
 Then open http://localhost:3100.
+
+## Template updates
+
+`ai-os` is the upstream template. A clone becomes the user's own AI through
+gitignored state (`.env`, `.dashboard/profile.json`) and any commits they make
+on their own repository. The launcher fetches template updates on startup and
+uses Git merge semantics so user changes are preserved; if tracked files are
+dirty or a merge conflicts, it skips the update.
 
 ## Adding capabilities later
 

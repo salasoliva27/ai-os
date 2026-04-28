@@ -126,6 +126,7 @@
 .wm-taskbar {
   display: flex;
   align-items: center;
+  position: relative;
   height: 34px;
   padding: 0 8px;
   background: var(--bg);
@@ -139,6 +140,23 @@
   gap: 4px;
   flex: 1;
   overflow-x: auto;
+}
+
+.wm-taskbar__brand {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: min(42vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(230, 233, 240, 0.58);
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  pointer-events: none;
 }
 
 .wm-taskbar__item {
