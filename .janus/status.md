@@ -4,6 +4,9 @@ stage: dev
 phase: ""
 phaseProgress: 0
 summary: "Blank-slate AI workspace template. Chat-only on first boot — onboarding decides which tools and windows you get."
+lastSyncedAt: "2026-04-30T19:01:15.427Z"
+lastSyncedCommit: "ad10d50"
+lastSyncedCommitMessage: "fix: harden template auto updates"
 ---
 
 ## Next Steps
