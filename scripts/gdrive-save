@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# gdrive-save — upload a local output file to Drive and update the project index.
+#
+# Usage:
+#   scripts/gdrive-save <local-path>                      # infer project from path
+#   scripts/gdrive-save <local-path> --project <name>     # explicit project
+#   scripts/gdrive-save <local-path> --as <drive-subpath> # explicit destination
+#
+# Path inference rules (in order):
+#   outputs/documents/<project>/<file>       → Janus_AI/<project>/<file>
+#   outputs/research/<project>/<file>        → Janus_AI/<project>/research/<file>
+#   outputs/screenshots/<project>/<file>     → Janus_AI/_media/<project>/screenshots/<file>
+#   outputs/<project>/<file>                 → Janus_AI/<project>/<file>
+#   dump/uploads/<anything>                  → Janus_AI/_uploads/<YYYY-MM-DD>/<file>
+#
+# Side effects:
+#   - Uploads the file to Drive via scripts/gdrive
+#   - Appends an entry to outputs/_drive-index/<project>.md
+#
+# Exit 0 on success; prints the Drive view URL on stdout.
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+GDRIVE="$REPO/scripts/gdrive"
+
+usage() {
+  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+[ $# -lt 1 ] && usage
+
+LOCAL="$1"; shift
+PROJECT=""
+DEST=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --project) PROJECT="$2"; shift 2 ;;
+    --as)      DEST="$2";    shift 2 ;;
+    -h|--help) usage ;;
+    *) echo "unknown arg: $1"; usage ;;
+  esac
+done
+
+[ -f "$LOCAL" ] || { echo "error: not a file: $LOCAL" >&2; exit 1; }
+
+# Make path relative to repo for inference
+REL="${LOCAL#$REPO/}"
+FILENAME="$(basename "$LOCAL")"
+
+if [ -z "$DEST" ]; then
+  case "$REL" in
+    outputs/documents/*/*)
+      [ -z "$PROJECT" ] && PROJECT="$(echo "$REL" | cut -d/ -f3)"
+      DEST="Janus_AI/$PROJECT"
+      ;;
+    outputs/research/*/*)
+      [ -z "$PROJECT" ] && PROJECT="$(echo "$REL" | cut -d/ -f3)"
+      DEST="Janus_AI/$PROJECT/research"
+      ;;
+    outputs/screenshots/*/*)
+      [ -z "$PROJECT" ] && PROJECT="$(echo "$REL" | cut -d/ -f3)"
+      DEST="Janus_AI/_media/$PROJECT/screenshots"
+      ;;
+    outputs/*/*)
+      [ -z "$PROJECT" ] && PROJECT="$(echo "$REL" | cut -d/ -f2)"
+      DEST="Janus_AI/$PROJECT"
+      ;;
+    dump/uploads/*)
+      DATE="$(date -u +%Y-%m-%d)"
+      PROJECT="${PROJECT:-_uploads}"
+      DEST="Janus_AI/_uploads/$DATE"
+      ;;
+    *)
+      if [ -n "$PROJECT" ]; then
+        DEST="Janus_AI/$PROJECT"
+      else
+        echo "error: could not infer project from path: $REL" >&2
+        echo "pass --project <name> or --as <drive-subpath>" >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
+# Ensure destination folder exists (mkdir is idempotent in gdrive)
+"$GDRIVE" mkdir "$DEST" >/dev/null
+
+# Upload
+RESULT="$("$GDRIVE" upload "$LOCAL" "$DEST")"
+DRIVE_ID="$(echo "$RESULT" | grep -oE '\([^)]+\)$' | head -1 | tr -d '()')"
+VIEW_URL="$(echo "$RESULT" | grep -oE 'https://drive\.google\.com/[^ ]+' | head -1)"
+
+echo "  → $DEST/$FILENAME"
+[ -n "$VIEW_URL" ] && echo "  → $VIEW_URL"
+
+# Update per-project index (skip for _uploads dumps)
+if [ -n "$PROJECT" ] && [ "$PROJECT" != "_uploads" ]; then
+  INDEX_DIR="$REPO/outputs/_drive-index"
+  INDEX_FILE="$INDEX_DIR/$PROJECT.md"
+  mkdir -p "$INDEX_DIR"
+  if [ ! -f "$INDEX_FILE" ]; then
+    {
+      echo "# Drive index — $PROJECT"
+      echo ""
+      echo "Mirror of \`Janus_AI/$PROJECT/\` in Google Drive."
+      echo ""
+      echo "| Date | File | Drive path | View |"
+      echo "|---|---|---|---|"
+    } > "$INDEX_FILE"
+  fi
+  TODAY="$(date -u +%Y-%m-%d)"
+  VIEW_CELL="${VIEW_URL:+[open]($VIEW_URL)}"
+  echo "| $TODAY | \`$FILENAME\` | \`$DEST/$FILENAME\` | $VIEW_CELL |" >> "$INDEX_FILE"
+  echo "  → indexed at outputs/_drive-index/$PROJECT.md"
+fi

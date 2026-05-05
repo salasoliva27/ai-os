@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Janus IA</title>
+
+    <!-- PWA manifest + theme. Same dark palette as the dashboard so the
+         splash screen / status bar / install icon all match. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0a0a0a" />
+    <meta name="description" content="Personal AI orchestrator dashboard" />
+
+    <!-- Favicons -->
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="icon" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" sizes="16x16" href="/icons/favicon-16.png" />
+
+    <!-- iOS-specific home-screen install support (iOS doesn't fully honor
+         the manifest's icons; needs apple-touch-icon explicitly).
+         Apple recently dropped apple-mobile-web-app-capable in favor of
+         the new mobile-web-app-capable, so set both for compat. -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Janus" />
+
+    <style>
+      body { background: var(--color-bg-primary, #1a1a1a); margin: 0; }
+    </style>
+    <script>
+      (function() {
+        var preset = localStorage.getItem('theme-preset') || 'dark';
+        document.documentElement.setAttribute('data-theme', preset);
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-dml8cWpo.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DqrFiSu1.css">
+  </head>
+  <body>
+    <div id="root" style="width:100vw;height:100vh;"></div>
+
+    <!-- Service worker registration. Required for some browsers to show
+         the install prompt; passthrough only, no caching. -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js').catch(function(err) {
+            console.warn('[pwa] sw registration failed:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

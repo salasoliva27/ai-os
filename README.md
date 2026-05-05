@@ -1,91 +1,24 @@
-# ai-os
+# AI OS
 
-A blank-slate AI workspace template you can clone and shape via conversation.
+Blank-slate AI workspace. On first boot the chat is the only window — say
+`/onboard` and the agent will interview you (~60-90 min, conversational, no
+forms) to learn what you do, the tools you use, and what would actually
+help. From your answers it proposes a CLAUDE.md, a starter wiki entry, an
+.mcp.json patch list, a dashboard window set, and an agent activation list
+— one file at a time, with `yes / no / edit` per file.
 
-- **Chat is the only thing on screen at first.** No pre-installed agents, no
-  pre-loaded memories, no boilerplate to delete.
-- **The AI does its own onboarding.** It asks what kind of AI you want, then
-  enables exactly the panels you need.
-- **Add tools by talking.** When you ask for a capability, the AI walks you
-  through getting the credential and writes it to a gitignored `.env`.
+## Run
 
-## Quick start
-
-```bash
-git clone https://github.com/salasoliva27/ai-os.git my-ai
-cd my-ai
-./dash --open
+```cmd
+AI OS.cmd
 ```
 
-Open http://localhost:3100. First run asks you to name the AI and connect an
-engine. After that, the chat greets you and asks what you want this workspace
-to be.
+(Auto-updates the repo, ensures Node + dependencies, builds the frontend,
+opens the dashboard at http://localhost:3100.)
 
-You'll need either an Anthropic or OpenAI API key. Either:
+## Origin
 
-- Paste it in the first-run setup screen, or
-- Open the **Credentials** panel later and add more keys.
-
-Credentials are written to this clone's gitignored `.env`. They are not stored
-in the template repo.
-
-## What's in the box
-
-```
-.
-├── CLAUDE.md            # Instructions for the AI itself (read first)
-├── README.md            # This file
-├── dashboard/
-│   ├── bridge/          # Single-file Express + WS server (bridge/server.ts)
-│   └── frontend/        # React + Vite, ~3 components
-├── dash                 # One-shot launcher: update, install, build, run
-├── AI OS.cmd            # Windows double-click launcher
-├── install-desktop.cmd  # Windows Desktop shortcut installer with icon
-├── assets/              # Desktop shortcut icon assets
-├── scripts/setup.sh     # Dependency install helper
-└── .devcontainer/       # GitHub Codespaces config
-```
-
-That's the whole template. ~600 lines of code, by design.
-
-## How it grows
-
-You start with chat. As you tell the AI what you want, panels appear in the
-topbar (Credentials, Files, Tasks, Memory, Calendar, Research, etc.). Panels
-listed in your profile but not yet implemented show a placeholder — ask the AI
-to scaffold them and it will.
-
-The dashboard's behavior is driven by `.dashboard/profile.json`, which the AI
-writes via a special `<<PROFILE: {...}>>` block the bridge intercepts during
-the first conversation.
-
-## Template updates
-
-Each clone can become its own AI without changing `salasoliva27/ai-os`.
-Personal state lives in gitignored files (`.env`, `.dashboard/profile.json`) or
-in commits on that person's own repository.
-
-On every `./dash` launch, ai-os fetches template updates and applies them with
-Git:
-
-- If the clone has no local source commits, it fast-forwards.
-- If the clone has local commits, it attempts a normal merge.
-- If tracked files are dirty or a merge would conflict, it skips the update and
-  keeps the current checkout untouched.
-
-For a fully separate AI repo, keep `template` or `upstream` pointed at
-`https://github.com/salasoliva27/ai-os.git` and set `origin` to the user's own
-repo.
-
-When a user clones directly into a differently named folder such as `my-ai`,
-the launcher automatically renames `origin` to `template` on first run. That
-keeps template updates available while leaving `origin` free for the user's own
-GitHub repo.
-
-On Windows, run `install-desktop.cmd` once after cloning. It creates an `AI OS`
-Desktop shortcut with its own icon; that shortcut still calls this clone's
-`AI OS.cmd`, so every launch checks the template before starting.
-
-## License
-
-MIT
+Cloned from the upstream Janus IA template (salasoliva27/janus-ia). Brain,
+dashboard, and tooling sync periodically via
+`scripts/sync-downstreams.sh`. Per-instance state (your wiki, your
+CLAUDE.md, your .env) stays local and never propagates back.

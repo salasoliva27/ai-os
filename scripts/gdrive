@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+"""
+gdrive — minimal Google Drive CLI for Janus IA.
+
+Auth model: OAuth 2.0 installed/web client + user refresh token.
+Reads creds from env:
+  GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
+
+Commands:
+  gdrive auth                              one-time OAuth flow → prints refresh token
+  gdrive ls [PATH]                         list folder contents (default root)
+  gdrive mkdir PATH                        create folder (recursive, mkdir -p)
+  gdrive mv SRC DST                        move or rename
+  gdrive rm PATH [--purge]                 trash (default) or hard-delete
+  gdrive upload LOCAL DEST_DIR [--name N]  upload a local file into a Drive dir
+  gdrive download PATH LOCAL               download a Drive file
+  gdrive find NAME                         search by name (contains)
+  gdrive id PATH                           print Drive id of a path
+  gdrive share PATH EMAIL [--role reader]  share with a user
+
+PATH is slash-delimited, rooted at My Drive. Use "" or "/" for root.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
+
+import requests
+
+TOKEN_URI = "https://oauth2.googleapis.com/token"
+AUTH_URI = "https://accounts.google.com/o/oauth2/v2/auth"
+API = "https://www.googleapis.com/drive/v3"
+UPLOAD = "https://www.googleapis.com/upload/drive/v3/files"
+SCOPE = "https://www.googleapis.com/auth/drive"
+
+# ─── token ──────────────────────────────────────────────────────────────────
+
+def _creds():
+    cid = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    cs = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+    rt = os.environ.get("GOOGLE_REFRESH_TOKEN", "").strip()
+    if not cid or not cs:
+        sys.exit("error: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing from env")
+    if not rt:
+        sys.exit("error: GOOGLE_REFRESH_TOKEN missing. Run `scripts/gdrive auth` once.")
+    return cid, cs, rt
+
+
+_ACCESS_TOKEN_CACHE = {"token": None, "expires": 0}
+
+
+def _access_token() -> str:
+    now = time.time()
+    if _ACCESS_TOKEN_CACHE["token"] and _ACCESS_TOKEN_CACHE["expires"] > now + 30:
+        return _ACCESS_TOKEN_CACHE["token"]
+    cid, cs, rt = _creds()
+    r = requests.post(
+        TOKEN_URI,
+        data={
+            "client_id": cid,
+            "client_secret": cs,
+            "refresh_token": rt,
+            "grant_type": "refresh_token",
+        },
+        timeout=15,
+    )
+    if r.status_code != 200:
+        sys.exit(f"error: token refresh failed ({r.status_code}): {r.text}")
+    data = r.json()
+    _ACCESS_TOKEN_CACHE["token"] = data["access_token"]
+    _ACCESS_TOKEN_CACHE["expires"] = now + int(data.get("expires_in", 3600))
+    return data["access_token"]
+
+
+def _headers(extra=None):
+    h = {"Authorization": f"Bearer {_access_token()}"}
+    if extra:
+        h.update(extra)
+    return h
+
+
+# ─── auth flow (one-time) ───────────────────────────────────────────────────
+
+def cmd_auth(args):
+    cid = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+    cs = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
+    if not cid or not cs:
+        sys.exit("error: GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing from env")
+
+    port = args.port
+    redirect_uri = f"http://localhost:{port}"
+
+    params = {
+        "client_id": cid,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": SCOPE,
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    auth_url = AUTH_URI + "?" + urllib.parse.urlencode(params)
+
+    print()
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("  Google Drive — one-time authorization")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print()
+    print(f"  1. Make sure http://localhost:{port} is in your OAuth client's")
+    print("     Authorized redirect URIs in Google Cloud Console.")
+    print()
+    print("  2. Open this URL in your browser (Codespaces will forward the port")
+    print("     back once Google redirects):")
+    print()
+    print(f"     {auth_url}")
+    print()
+    print("  3. Grant access. Waiting for redirect...")
+    print()
+
+    code_holder = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            if "code" in qs:
+                code_holder["code"] = qs["code"][0]
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<h2>Authorization received.</h2><p>You can close this tab.</p>")
+            else:
+                self.send_response(400)
+                self.end_headers()
+                self.wfile.write(f"Missing code: {qs}".encode())
+
+        def log_message(self, *a, **k):
+            return
+
+    server = HTTPServer(("0.0.0.0", port), Handler)
+    while "code" not in code_holder:
+        server.handle_request()
+
+    print(f"  Got code. Exchanging for refresh token...")
+    r = requests.post(
+        TOKEN_URI,
+        data={
+            "client_id": cid,
+            "client_secret": cs,
+            "code": code_holder["code"],
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
+    )
+    if r.status_code != 200:
+        sys.exit(f"error: code exchange failed ({r.status_code}): {r.text}")
+    data = r.json()
+    rt = data.get("refresh_token")
+    if not rt:
+        sys.exit("error: Google did not return a refresh_token. Revoke access and re-run with prompt=consent.")
+
+    print()
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("  SUCCESS — add this to dotfiles/.env:")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print()
+    print(f"  GOOGLE_REFRESH_TOKEN={rt}")
+    print()
+    print("  Then in a NEW terminal: `export GOOGLE_REFRESH_TOKEN=...`")
+    print("  Then verify: `scripts/gdrive ls`")
+    print()
+
+
+# ─── path resolution ────────────────────────────────────────────────────────
+
+def _list_children(parent_id: str, name: str | None = None, mime: str | None = None):
+    q = [f"'{parent_id}' in parents", "trashed = false"]
+    if name is not None:
+        safe = name.replace("'", "\\'")
+        q.append(f"name = '{safe}'")
+    if mime is not None:
+        q.append(f"mimeType = '{mime}'")
+    params = {
+        "q": " and ".join(q),
+        "fields": "files(id,name,mimeType,size,modifiedTime,parents)",
+        "pageSize": 1000,
+    }
+    r = requests.get(API + "/files", headers=_headers(), params=params, timeout=20)
+    r.raise_for_status()
+    return r.json().get("files", [])
+
+
+def _resolve_path(path: str, must_exist: bool = True):
+    """Return (id, mimeType) for a Drive path. Root is ''/'/'. """
+    path = path.strip().strip("/")
+    if not path:
+        return "root", "application/vnd.google-apps.folder"
+    parts = path.split("/")
+    parent = "root"
+    last_mime = "application/vnd.google-apps.folder"
+    for i, seg in enumerate(parts):
+        hits = _list_children(parent, name=seg)
+        if not hits:
+            if must_exist:
+                sys.exit(f"error: path not found: {'/'.join(parts[: i + 1])}")
+            return None, None
+        parent = hits[0]["id"]
+        last_mime = hits[0]["mimeType"]
+    return parent, last_mime
+
+
+def _mkdir_one(parent_id: str, name: str) -> str:
+    r = requests.post(
+        API + "/files",
+        headers=_headers({"Content-Type": "application/json"}),
+        json={
+            "name": name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id],
+        },
+        timeout=20,
+    )
+    r.raise_for_status()
+    return r.json()["id"]
+
+
+# ─── commands ───────────────────────────────────────────────────────────────
+
+def cmd_ls(args):
+    fid, mime = _resolve_path(args.path)
+    if mime != "application/vnd.google-apps.folder":
+        sys.exit(f"error: {args.path} is not a folder")
+    files = _list_children(fid)
+    files.sort(key=lambda f: (f["mimeType"] != "application/vnd.google-apps.folder", f["name"].lower()))
+    for f in files:
+        is_dir = f["mimeType"] == "application/vnd.google-apps.folder"
+        size = f.get("size", "-") if not is_dir else "-"
+        kind = "d" if is_dir else "f"
+        print(f"{kind}  {size:>10}  {f['modifiedTime'][:10]}  {f['name']}")
+
+
+def cmd_mkdir(args):
+    parts = args.path.strip("/").split("/")
+    parent = "root"
+    for i, seg in enumerate(parts):
+        hits = _list_children(parent, name=seg, mime="application/vnd.google-apps.folder")
+        if hits:
+            parent = hits[0]["id"]
+            continue
+        parent = _mkdir_one(parent, seg)
+        print(f"created {'/'.join(parts[: i + 1])}  ({parent})")
+    print(parent)
+
+
+def cmd_mv(args):
+    sid, _ = _resolve_path(args.src)
+    # figure out destination: if DST exists as folder → move into it; else → rename into parent
+    dst_id, dst_mime = _resolve_path(args.dst, must_exist=False)
+    if dst_id and dst_mime == "application/vnd.google-apps.folder":
+        new_parent, new_name = dst_id, None
+    else:
+        dparts = args.dst.strip("/").rsplit("/", 1)
+        if len(dparts) == 1:
+            new_parent = "root"
+            new_name = dparts[0]
+        else:
+            new_parent, _ = _resolve_path(dparts[0])
+            new_name = dparts[1]
+    # lookup current parents
+    r = requests.get(API + f"/files/{sid}", headers=_headers(), params={"fields": "parents,name"}, timeout=20)
+    r.raise_for_status()
+    old_parents = ",".join(r.json().get("parents", []))
+    params = {"addParents": new_parent, "removeParents": old_parents, "fields": "id,name,parents"}
+    body = {"name": new_name} if new_name else {}
+    r = requests.patch(
+        API + f"/files/{sid}",
+        headers=_headers({"Content-Type": "application/json"}),
+        params=params,
+        json=body,
+        timeout=20,
+    )
+    r.raise_for_status()
+    print(f"moved → {r.json().get('name')}  ({sid})")
+
+
+def cmd_rm(args):
+    fid, _ = _resolve_path(args.path)
+    if args.purge:
+        r = requests.delete(API + f"/files/{fid}", headers=_headers(), timeout=20)
+        r.raise_for_status()
+        print(f"purged {args.path}")
+    else:
+        r = requests.patch(
+            API + f"/files/{fid}",
+            headers=_headers({"Content-Type": "application/json"}),
+            json={"trashed": True},
+            timeout=20,
+        )
+        r.raise_for_status()
+        print(f"trashed {args.path}")
+
+
+def cmd_upload(args):
+    local = Path(args.local)
+    if not local.is_file():
+        sys.exit(f"error: {local} is not a file")
+    parent_id, _ = _resolve_path(args.dest_dir)
+    name = args.name or local.name
+    meta = {"name": name, "parents": [parent_id]}
+    files = {
+        "metadata": ("metadata", json.dumps(meta), "application/json"),
+        "file": (name, local.read_bytes()),
+    }
+    r = requests.post(
+        UPLOAD + "?uploadType=multipart&fields=id,name,webViewLink",
+        headers={"Authorization": f"Bearer {_access_token()}"},
+        files=files,
+        timeout=120,
+    )
+    r.raise_for_status()
+    data = r.json()
+    print(f"uploaded  {data['name']}  ({data['id']})")
+    if data.get("webViewLink"):
+        print(data["webViewLink"])
+
+
+def cmd_download(args):
+    fid, mime = _resolve_path(args.path)
+    if mime == "application/vnd.google-apps.folder":
+        sys.exit("error: cannot download a folder")
+    r = requests.get(API + f"/files/{fid}", headers=_headers(), params={"alt": "media"}, stream=True, timeout=120)
+    r.raise_for_status()
+    out = Path(args.local)
+    out.write_bytes(r.content)
+    print(f"downloaded → {out}")
+
+
+def cmd_find(args):
+    safe = args.name.replace("'", "\\'")
+    q = f"name contains '{safe}' and trashed = false"
+    params = {"q": q, "fields": "files(id,name,mimeType,parents)", "pageSize": 100}
+    r = requests.get(API + "/files", headers=_headers(), params=params, timeout=20)
+    r.raise_for_status()
+    for f in r.json().get("files", []):
+        kind = "d" if f["mimeType"] == "application/vnd.google-apps.folder" else "f"
+        print(f"{kind}  {f['id']}  {f['name']}")
+
+
+def cmd_id(args):
+    fid, _ = _resolve_path(args.path)
+    print(fid)
+
+
+def cmd_share(args):
+    fid, _ = _resolve_path(args.path)
+    r = requests.post(
+        API + f"/files/{fid}/permissions",
+        headers=_headers({"Content-Type": "application/json"}),
+        json={"type": "user", "role": args.role, "emailAddress": args.email},
+        params={"sendNotificationEmail": "false"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    print(f"shared {args.path} with {args.email} as {args.role}")
+
+
+# ─── cli ────────────────────────────────────────────────────────────────────
+
+def main():
+    p = argparse.ArgumentParser(prog="gdrive")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("auth"); s.add_argument("--port", type=int, default=8765); s.set_defaults(fn=cmd_auth)
+    s = sub.add_parser("ls"); s.add_argument("path", nargs="?", default=""); s.set_defaults(fn=cmd_ls)
+    s = sub.add_parser("mkdir"); s.add_argument("path"); s.set_defaults(fn=cmd_mkdir)
+    s = sub.add_parser("mv"); s.add_argument("src"); s.add_argument("dst"); s.set_defaults(fn=cmd_mv)
+    s = sub.add_parser("rm"); s.add_argument("path"); s.add_argument("--purge", action="store_true"); s.set_defaults(fn=cmd_rm)
+    s = sub.add_parser("upload"); s.add_argument("local"); s.add_argument("dest_dir"); s.add_argument("--name"); s.set_defaults(fn=cmd_upload)
+    s = sub.add_parser("download"); s.add_argument("path"); s.add_argument("local"); s.set_defaults(fn=cmd_download)
+    s = sub.add_parser("find"); s.add_argument("name"); s.set_defaults(fn=cmd_find)
+    s = sub.add_parser("id"); s.add_argument("path"); s.set_defaults(fn=cmd_id)
+    s = sub.add_parser("share"); s.add_argument("path"); s.add_argument("email"); s.add_argument("--role", default="reader"); s.set_defaults(fn=cmd_share)
+
+    args = p.parse_args()
+    try:
+        args.fn(args)
+    except requests.HTTPError as e:
+        sys.exit(f"http error: {e.response.status_code} {e.response.text}")
+
+
+if __name__ == "__main__":
+    main()

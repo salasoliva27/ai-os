@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if command -v uvx >/dev/null 2>&1; then
+  exec uvx snowflake-labs-mcp "$@"
+fi
+
+if command -v pipx >/dev/null 2>&1; then
+  export PIPX_HOME="${PIPX_HOME:-/tmp/janus-pipx/home}"
+  export PIPX_BIN_DIR="${PIPX_BIN_DIR:-/tmp/janus-pipx/bin}"
+  export PIPX_MAN_DIR="${PIPX_MAN_DIR:-/tmp/janus-pipx/man}"
+  export PIP_CACHE_DIR="${PIP_CACHE_DIR:-/tmp/janus-pip-cache}"
+  mkdir -p "$PIPX_HOME" "$PIPX_BIN_DIR" "$PIPX_MAN_DIR" "$PIP_CACHE_DIR"
+  exec pipx run snowflake-labs-mcp "$@"
+fi
+
+echo "snowflake-mcp: install uvx or pipx to run snowflake-labs-mcp" >&2
+exit 127

@@ -1,25 +1,22 @@
-// Single-user auth gate for the ai-os dashboard bridge.
+// Single-user auth gate for the Janus dashboard bridge.
 //
-// Why this exists: ai-os running in Codespaces is implicitly gated by GitHub
-// (your forwarded-port URL only opens for accounts with repo access). ai-os
+// Why this exists: Janus running in Codespaces is implicitly gated by GitHub
+// (your forwarded-port URL only opens for accounts with repo access). Janus
 // running on a public-internet VM (Oracle / home server / Tailscale public
 // node) has no such gate — the bridge URL is just an HTTP server and would
 // happily run AI commands for anyone who finds it. This module adds a
 // password-gate and a cookie session.
 //
 // Single-user model: ONE username + ONE bcrypt-hashed password from env.
-// Each fork (per-owner deployment) sets these in its own dotfiles.
+// Forks (pablo-ia, jp-ai, etc.) override these in their own dotfiles.
 //
 // Auth is ENFORCED only when:
-//   - AIOS_AUTH_USER and AIOS_AUTH_PASSWORD_HASH are both set
+//   - JANUS_AUTH_USER and JANUS_AUTH_PASSWORD_HASH are both set
 //   - AND we're not running in Codespaces (CODESPACES env != "true")
-//   - OR AIOS_AUTH_FORCE=true is set explicitly (overrides Codespace bypass)
+//   - OR JANUS_AUTH_FORCE=true is set explicitly (overrides Codespace bypass)
 // In Codespaces, GitHub already gates the URL — adding a password on top
 // would just mean re-typing it constantly. The dotfiles auth vars still
 // load there, but the gate stays open.
-//
-// Generate the password hash from a password (do this once, store the hash):
-//   node -e "console.log(require('bcryptjs').hashSync('YourPassword!', 12))"
 
 import express from "express";
 import type { Express, Request, Response, NextFunction } from "express";
@@ -30,19 +27,20 @@ import bcrypt from "bcryptjs";
 import cookieSession from "cookie-session";
 import crypto from "node:crypto";
 
-const AUTH_USER = process.env.AIOS_AUTH_USER ?? "";
-const AUTH_HASH = process.env.AIOS_AUTH_PASSWORD_HASH ?? "";
+const AUTH_USER = process.env.JANUS_AUTH_USER ?? "";
+const AUTH_HASH = process.env.JANUS_AUTH_PASSWORD_HASH ?? "";
 const SESSION_SECRET =
-  process.env.AIOS_SESSION_SECRET || crypto.randomBytes(32).toString("hex");
+  process.env.JANUS_SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const IN_CODESPACE = process.env.CODESPACES === "true";
-const FORCE = process.env.AIOS_AUTH_FORCE === "true";
+const FORCE = process.env.JANUS_AUTH_FORCE === "true";
 const ENFORCE = (!!AUTH_USER && !!AUTH_HASH && !IN_CODESPACE) || FORCE;
 
 // In-memory rate limit. Per-IP, recent-fail-window. After N fails in W min,
 // lock for L min. Memory only — restarts clear it. Fine for single-user.
 const failLog = new Map<string, number[]>();
-const LOCKOUT_MS = 5 * 60 * 1000;
+const FAIL_WINDOW_MS = 5 * 60 * 1000;
 const FAIL_LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_MS = 5 * 60 * 1000;
 
 function isLockedOut(ip: string): boolean {
   const now = Date.now();
@@ -65,7 +63,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a0a0a">
-  <title>ai-os — Sign in</title>
+  <title>Janus IA — Sign in</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body {
@@ -98,7 +96,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <form method="POST" action="/login" class="card" autocomplete="on">
-    <h1>ai-os</h1>
+    <h1>Janus IA</h1>
     <div class="sub">Sign in to your dashboard</div>
     <div class="err">__ERR__</div>
     <div class="field">
@@ -132,7 +130,7 @@ interface AuthHandle {
 export function mountAuth(app: Express): AuthHandle {
   if (!ENFORCE) {
     if (!AUTH_USER || !AUTH_HASH) {
-      console.log("[auth] DISABLED — AIOS_AUTH_USER / AIOS_AUTH_PASSWORD_HASH not set");
+      console.log("[auth] DISABLED — JANUS_AUTH_USER / JANUS_AUTH_PASSWORD_HASH not set");
     } else if (IN_CODESPACE) {
       console.log("[auth] DISABLED — running in Codespaces (GitHub already gates the URL)");
     }
@@ -157,14 +155,19 @@ export function mountAuth(app: Express): AuthHandle {
 
   console.log(`[auth] ENABLED — single-user gate for "${AUTH_USER}"`);
 
+  // Login form POSTs application/x-www-form-urlencoded — the upstream
+  // express.json() doesn't parse it. Apply urlencoded just on /login.
   app.use("/login", express.urlencoded({ extended: false }));
 
   const sessionMw = cookieSession({
-    name: "aios_session",
+    name: "janus_session",
     keys: [SESSION_SECRET],
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     httpOnly: true,
     sameSite: "lax",
+    // secure: true is correct behind HTTPS (Oracle deployment will be); for
+    // local Codespace dev this would break. Trust X-Forwarded-Proto via
+    // cookie-session's secureProxy when behind a reverse proxy in production.
     secureProxy: true,
   });
   app.use(sessionMw);
@@ -189,8 +192,12 @@ export function mountAuth(app: Express): AuthHandle {
     const user = String(body.user ?? "");
     const pw = String(body.pw ?? "");
     if (!user || !pw) return res.redirect("/login?err=1");
+
+    // Always run bcrypt.compare even on wrong username so timing doesn't reveal
+    // whether the username is right.
     const ok = user === AUTH_USER && (await bcrypt.compare(pw, AUTH_HASH));
     if (user !== AUTH_USER) await bcrypt.compare(pw, AUTH_HASH);
+
     if (!ok) {
       recordFail(ip);
       return res.redirect("/login?err=1");
@@ -206,6 +213,8 @@ export function mountAuth(app: Express): AuthHandle {
     res.redirect("/login");
   });
 
+  // Gate everything else — applied AFTER the login routes above so they
+  // remain reachable.
   app.use((req: Request, res: Response, next: NextFunction) => {
     if (req.path === "/login" || req.path === "/logout") return next();
     if ((req.session as unknown as { authed?: boolean })?.authed) return next();
@@ -226,6 +235,10 @@ export function mountAuth(app: Express): AuthHandle {
             return;
           }
         }
+        // Run cookie-session on the upgrade request to populate req.session.
+        // cookie-session reads req.headers.cookie and writes setHeader on
+        // response — for upgrade we don't write back, so a stub response
+        // works.
         const stubRes = {
           getHeader: () => undefined,
           setHeader: () => undefined,

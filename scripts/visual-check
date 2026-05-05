@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+/**
+ * visual-check — Playwright-MCP fallback. Boots headless Chromium via
+ * Puppeteer against the chromium binary Playwright already installed, then
+ * captures screenshots at the standard viewports used by the UX agent.
+ *
+ * Use when the Playwright MCP errors with `Chromium distribution 'chrome'
+ * is not found at /opt/google/chrome/chrome` or when you need an API-less
+ * scriptable screenshot during a session.
+ *
+ * Usage:
+ *   scripts/visual-check <url> [--out outputs/screenshots/<project>] [--theme <id>]
+ *                               [--viewports desktop,mobile,tablet] [--full]
+ *
+ * Exits 0 on success, non-zero if the URL doesn't respond or Chromium fails.
+ */
+const fs = require("node:fs");
+const path = require("node:path");
+// puppeteer-core lives in dashboard/node_modules — this script is repo-wide.
+const puppeteer = require("/workspaces/janus-ia/dashboard/node_modules/puppeteer-core");
+
+const CHROMIUM = "/home/codespace/.cache/ms-playwright/chromium-1217/chrome-linux64/chrome";
+const VIEWPORTS = {
+  desktop: { width: 1280, height: 800 },
+  mobile:  { width: 390,  height: 844 },
+  tablet:  { width: 768,  height: 1024 },
+};
+
+function parseArgs(argv) {
+  const args = { url: null, out: "outputs/screenshots/ui", viewports: ["desktop"], fullPage: false, theme: null };
+  const rest = argv.slice(2);
+  if (!rest[0] || rest[0].startsWith("-")) { die("usage: scripts/visual-check <url> [--out dir] [--viewports list] [--full] [--theme id]"); }
+  args.url = rest[0];
+  for (let i = 1; i < rest.length; i++) {
+    const k = rest[i];
+    if (k === "--out") args.out = rest[++i];
+    else if (k === "--viewports") args.viewports = rest[++i].split(",").map(s => s.trim()).filter(Boolean);
+    else if (k === "--full") args.fullPage = true;
+    else if (k === "--theme") args.theme = rest[++i];
+    else die(`unknown arg: ${k}`);
+  }
+  for (const v of args.viewports) if (!VIEWPORTS[v]) die(`unknown viewport: ${v} (valid: ${Object.keys(VIEWPORTS).join(", ")})`);
+  return args;
+}
+
+function die(msg) { console.error("error:", msg); process.exit(2); }
+
+if (!fs.existsSync(CHROMIUM)) {
+  die(`chromium missing at ${CHROMIUM}. Run: npx playwright install chromium`);
+}
+
+async function main() {
+  const args = parseArgs(process.argv);
+  const outDir = path.resolve(args.out);
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const slug = args.url.replace(/^https?:\/\//, "").replace(/[^a-zA-Z0-9]+/g, "-").slice(0, 40);
+
+  console.log(`[visual-check] booting chromium ${CHROMIUM}`);
+  const browser = await puppeteer.launch({
+    executablePath: CHROMIUM,
+    headless: true,
+    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+  });
+
+  try {
+    for (const vp of args.viewports) {
+      const { width, height } = VIEWPORTS[vp];
+      const page = await browser.newPage();
+      await page.setViewport({ width, height, deviceScaleFactor: 1 });
+      if (args.theme) {
+        await page.evaluateOnNewDocument((t) => localStorage.setItem("venture-os-theme", t), args.theme);
+      }
+      console.log(`[visual-check] ${vp} ${width}×${height} → ${args.url}`);
+      await page.goto(args.url, { waitUntil: "networkidle2", timeout: 20000 }).catch(e => {
+        console.error(`[visual-check] navigate failed: ${e.message}`);
+      });
+      await new Promise(r => setTimeout(r, 500));
+      const file = path.join(outDir, `${slug}-${vp}${args.theme ? "-" + args.theme : ""}-${stamp}.png`);
+      await page.screenshot({ path: file, fullPage: args.fullPage });
+      const size = fs.statSync(file).size;
+      console.log(`[visual-check]   ✓ ${file}  (${(size / 1024).toFixed(0)} KB)`);
+      await page.close();
+    }
+  } finally {
+    await browser.close();
+  }
+
+  console.log(`[visual-check] done. screenshots in ${outDir}`);
+}
+
+main().catch(e => { console.error("error:", e.message); process.exit(1); });

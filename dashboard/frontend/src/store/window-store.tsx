@@ -1,63 +1,58 @@
 import { createContext, useContext, useReducer, useEffect, type ReactNode } from 'react';
-import type { WindowState, WindowLayout, WindowAction, PanelId } from '../types/window';
+import type { WindowState, WindowLayout, WindowAction } from '../types/window';
+import { rootColor } from '../types/window';
 
-const STORAGE_KEY = 'ai-os-window-layout-v1';
-const TOPBAR_HEIGHT = 44;
+const STORAGE_KEY = 'venture-os-window-layout-v5';
+const TOPBAR_HEIGHT = 40;
 const TASKBAR_HEIGHT = 34;
 
 function vw() { return typeof window !== 'undefined' ? window.innerWidth : 1920; }
 function vh() { return typeof window !== 'undefined' ? window.innerHeight - TOPBAR_HEIGHT - TASKBAR_HEIGHT : 900; }
 
+// ── Default tiled layout (looks like a grid but every window is independent) ──
+
 function defaultLayout(): WindowLayout {
   const w = vw(), h = vh();
+  // 3-column, 2-row tiling as starting positions
+  const c0 = Math.round(w * 0.22);
+  const c1 = Math.round(w * 0.48);
+  const c2 = w - c0 - c1;
+  const r0 = Math.round(h * 0.65);
+  const r1 = h - r0;
+
   return {
     nextZIndex: 10,
     windows: [
-      {
-        id: 'win-chat', title: 'Chat', type: 'chat',
-        x: Math.round(w * 0.2), y: Math.round(h * 0.05),
-        width: Math.round(w * 0.6), height: Math.round(h * 0.85),
-        minWidth: 280, minHeight: 200,
-        zIndex: 5, minimized: false, maximized: false, visible: true, closable: true, persistent: true,
-      },
+      { id: 'win-chat', title: 'Chat A', type: 'chat',
+        x: 0, y: 0, width: c0, height: h,
+        minWidth: 200, minHeight: 150,
+        zIndex: 4, minimized: false, maximized: false, visible: true, closable: true, persistent: true, sessionId: 'session-0',
+        lineage: {
+          depth: 0,
+          label: 'Chat A',
+          parentSessionId: null,
+          breadcrumb: ['Chat A'],
+          color: rootColor('session-0'),
+          rootSessionId: 'session-0',
+          rootLabel: 'A',
+        } },
+      { id: 'win-center', title: 'System', type: 'center',
+        x: c0, y: 0, width: c1, height: r0,
+        minWidth: 200, minHeight: 150,
+        zIndex: 3, minimized: false, maximized: false, visible: true, closable: true, persistent: true },
+      { id: 'win-bottom', title: 'Activity', type: 'bottom',
+        x: c0, y: r0, width: c1, height: r1,
+        minWidth: 200, minHeight: 100,
+        zIndex: 2, minimized: false, maximized: false, visible: true, closable: true, persistent: true },
+      { id: 'win-right', title: 'Context', type: 'right',
+        x: c0 + c1, y: 0, width: c2, height: h,
+        minWidth: 200, minHeight: 150,
+        zIndex: 1, minimized: false, maximized: false, visible: true, closable: true, persistent: true },
     ],
   };
 }
 
-const PANEL_DEFAULTS: Record<PanelId, { title: string; w: number; h: number; minW: number; minH: number }> = {
-  chat:        { title: 'Chat',        w: 0.6,  h: 0.85, minW: 280, minH: 200 },
-  credentials: { title: 'Credentials', w: 0.5,  h: 0.7,  minW: 320, minH: 240 },
-  files:       { title: 'Files',       w: 0.55, h: 0.7,  minW: 320, minH: 240 },
-  tasks:       { title: 'Tasks',       w: 0.45, h: 0.75, minW: 280, minH: 240 },
-  memory:      { title: 'Memory',      w: 0.55, h: 0.7,  minW: 320, minH: 240 },
-  calendar:    { title: 'Calendar',    w: 0.6,  h: 0.7,  minW: 320, minH: 240 },
-  research:    { title: 'Research',    w: 0.55, h: 0.75, minW: 320, minH: 260 },
-};
-
-export function buildPanelWindow(type: PanelId, existingCount: number): WindowState {
-  const d = PANEL_DEFAULTS[type];
-  const w = vw(), h = vh();
-  const winW = Math.round(w * d.w);
-  const winH = Math.round(h * d.h);
-  const offset = (existingCount % 6) * 30;
-  return {
-    id: `win-${type}`,
-    title: d.title,
-    type,
-    x: Math.round((w - winW) / 2) + offset,
-    y: Math.round((h - winH) / 2) + offset,
-    width: winW,
-    height: winH,
-    minWidth: d.minW,
-    minHeight: d.minH,
-    zIndex: 0,
-    minimized: false,
-    maximized: false,
-    visible: true,
-    closable: true,
-    persistent: true,
-  };
-}
+// ── Reducer ──
 
 function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout {
   switch (action.type) {
@@ -129,6 +124,7 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
         windows: state.windows.map(w => {
           if (w.id !== action.id) return w;
           if (w.maximized) {
+            // Restore to pre-max bounds
             const b = w.preMaxBounds || { x: 50, y: 50, width: 600, height: 400 };
             return { ...w, maximized: false, zIndex: nz, ...b, preMaxBounds: undefined };
           }
@@ -142,6 +138,7 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
     }
 
     case 'FLOAT': {
+      // Restore to a centered, reasonable floating size
       const nz = state.nextZIndex + 1;
       const w = vw(), h = vh();
       const floatW = Math.round(w * 0.45);
@@ -172,6 +169,8 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
     }
 
     case 'CLOSE': {
+      // Persistent windows (core 4) are hidden so the taskbar can reopen them.
+      // Non-persistent windows (forked chats, SQL consoles) are removed entirely.
       const target = state.windows.find(w => w.id === action.id);
       if (!target || !target.closable) return state;
       if (target.persistent) {
@@ -190,17 +189,6 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
 
     case 'ADD': {
       const nz = state.nextZIndex + 1;
-      const existing = state.windows.find(w => w.id === action.window.id);
-      if (existing) {
-        return {
-          ...state, nextZIndex: nz,
-          windows: state.windows.map(w =>
-            w.id === action.window.id
-              ? { ...w, visible: true, minimized: false, zIndex: nz }
-              : w
-          ),
-        };
-      }
       return {
         ...state, nextZIndex: nz,
         windows: [...state.windows, { ...action.window, zIndex: nz }],
@@ -215,12 +203,23 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
   }
 }
 
+// ── Persistence ──
+
 function loadLayout(): WindowLayout {
+  // Clear all old keys
+  try {
+    localStorage.removeItem('venture-os-window-layout');
+    localStorage.removeItem('venture-os-window-layout-v2');
+    localStorage.removeItem('venture-os-window-layout-v3');
+  } catch { /* ignore */ }
+
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as WindowLayout;
-      if (parsed.windows?.length > 0) return parsed;
+      if (parsed.windows?.length > 0) {
+        return parsed;
+      }
     }
   } catch { /* fall through */ }
   return defaultLayout();
@@ -234,6 +233,8 @@ function saveLayout(layout: WindowLayout) {
   }, 500);
 }
 
+// ── Context ──
+
 interface WindowManagerValue {
   layout: WindowLayout;
   dispatch: (action: WindowAction) => void;
@@ -246,6 +247,13 @@ export function WindowManagerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { saveLayout(layout); }, [layout]);
 
+  // Recalc default positions on browser resize
+  useEffect(() => {
+    const onResize = () => dispatch({ type: 'RESET' });
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   return (
     <WindowManagerContext.Provider value={{ layout, dispatch }}>
       {children}
@@ -257,4 +265,9 @@ export function useWindowManager() {
   const ctx = useContext(WindowManagerContext);
   if (!ctx) throw new Error('useWindowManager must be used within WindowManagerProvider');
   return ctx;
+}
+
+export function useWindow(id: string): WindowState | undefined {
+  const { layout } = useWindowManager();
+  return layout.windows.find(w => w.id === id);
 }

@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# dash-link — install a `./dash` wrapper into another repo so running ./dash
+# there launches the Janus dashboard scoped to THAT repo, while the code stays
+# in janus-ia (single source of truth).
+#
+# Usage:
+#   ./scripts/dash-link <target-repo>     e.g. ./scripts/dash-link ../jp-ai
+#   ./scripts/dash-link                   → prints usage
+#
+# After install, `cd ../jp-ai && ./dash` launches the dashboard with
+# WORKSPACE_ROOT=/workspaces/jp-ai and the bridge reads/writes jp-ai's
+# .mcp.json, agents/, learnings/, memory/, etc.
+
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+  echo "usage: $0 <target-repo>"
+  echo "example: $0 ../jp-ai"
+  exit 1
+fi
+
+TARGET="$(cd "$1" && pwd)"
+SOURCE="$(cd "$(dirname "$0")/.." && pwd)"
+
+if [ ! -d "$TARGET" ]; then
+  echo "× $TARGET does not exist" >&2
+  exit 1
+fi
+if [ ! -f "$SOURCE/dash" ]; then
+  echo "× source $SOURCE/dash not found — are you running this from janus-ia?" >&2
+  exit 1
+fi
+if [ "$TARGET" = "$SOURCE" ]; then
+  echo "× target is the same as source — no wrapper needed here" >&2
+  exit 1
+fi
+
+WRAPPER="$TARGET/dash"
+if [ -e "$WRAPPER" ]; then
+  echo "  $WRAPPER already exists — overwriting"
+fi
+
+cat > "$WRAPPER" <<EOF
+#!/usr/bin/env bash
+# Wrapper — delegates to the Janus dashboard at \$JANUS_DASH_HOME,
+# scoped to THIS repo via WORKSPACE_ROOT.
+# Regenerate with: $SOURCE/scripts/dash-link $TARGET
+set -e
+export WORKSPACE_ROOT="\$(cd "\$(dirname "\$0")" && pwd)"
+export JANUS_DASH_HOME="$SOURCE"
+exec "\$JANUS_DASH_HOME/dash" "\$@"
+EOF
+chmod +x "$WRAPPER"
+
+echo "✓ installed $WRAPPER → delegates to $SOURCE/dash"
+echo "  run it from $TARGET:"
+echo "    cd $TARGET && ./dash"

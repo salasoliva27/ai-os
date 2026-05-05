@@ -1,0 +1,64 @@
+:root,
+[data-theme="dark"] {
+  /* Background — deeper, richer darks */
+  --color-bg-primary: oklch(0.11 0.008 260);
+  --color-bg-secondary: oklch(0.14 0.008 260);
+  --color-bg-surface: oklch(0.18 0.01 260);
+
+  /* Text — crisper contrast */
+  --color-text-primary: oklch(0.96 0.005 260);
+  --color-text-secondary: oklch(0.72 0.01 260);
+  --color-text-muted: oklch(0.48 0.01 260);
+
+  /* Accent — premium cyan-teal */
+  --color-accent: oklch(0.78 0.16 180);
+  --color-accent-hover: oklch(0.83 0.16 180);
+  --color-danger: oklch(0.65 0.25 25);
+  --color-success: oklch(0.72 0.20 145);
+
+  /* Extended backgrounds */
+  --color-bg-elevated: oklch(0.22 0.01 260);
+  --color-bg-inset: oklch(0.09 0.006 260);
+
+  /* Text on colored backgrounds */
+  --color-text-on-accent: oklch(0.13 0.01 260);
+
+  /* Borders — subtler */
+  --border-color: oklch(0.22 0.008 260);
+  --border-color-hover: oklch(0.32 0.012 260);
+  --border-radius-sm: 4px;
+  --border-radius-md: 8px;
+  --border-radius-lg: 12px;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* Typography — tighter, cleaner */
+  --font-family-body: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-heading: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* Animation */
+  --animation-speed: 1;
+  --animation-intensity: 1;
+
+  /* Premium shadows */
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6), 0 4px 8px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 20px rgba(100, 220, 220, 0.08);
+}
+
+/* Light themes: heavy dark shadows feel muddy on light backgrounds. */
+[data-theme-tone="light"] {
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12), 0 4px 8px rgba(0, 0, 0, 0.06);
+  --shadow-glow: 0 0 20px rgba(100, 180, 200, 0.15);
+}

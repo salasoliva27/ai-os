@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "http",
+            "url": "http://localhost:3100/hooks/post-tool-use"
+          }
+        ]
+      }
+    ]
+  }
+}
