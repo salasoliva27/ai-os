@@ -22,6 +22,10 @@ dump/uploads/
 *.log
 # Sibling-session coordination log (per-session, ephemeral)
 .janus/session-log.jsonl
+# Onboarding intake answers — personal user info, never versioned.
+# (The interview structure is in concepts/onboarding-interview.md and is
+#  in sync. The answers are per-instance and stay local.)
+outputs/onboarding/
 # Generated binaries — these go to Drive (Janus_AI/), never git.
 # See AGENTS.md storage/tool routing.
 outputs/**/*.pdf

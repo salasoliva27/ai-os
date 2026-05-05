@@ -258,6 +258,58 @@ export function startServer(port: number): Promise<http.Server> {
     res.json(value);
   });
 
+  // Git pending — janus-ia repo only. Counts (a) uncommitted working-tree
+  // changes and (b) commits ahead of upstream. Powers the top-bar pending
+  // badge + dropdown. Cached 10s so polling is cheap.
+  type GitPendingPayload = {
+    branch: string | null;
+    upstream: string | null;
+    uncommitted: { status: string; path: string }[];
+    unpushed: { sha: string; subject: string }[];
+    total: number;
+  };
+  let pendingCache: { value: GitPendingPayload; at: number } | null = null;
+  app.get("/api/git/pending", (_req, res) => {
+    const now = Date.now();
+    if (pendingCache && now - pendingCache.at < 10_000) {
+      res.json(pendingCache.value);
+      return;
+    }
+    const value: GitPendingPayload = {
+      branch: null, upstream: null, uncommitted: [], unpushed: [], total: 0,
+    };
+    try {
+      value.branch = execFileSync("git", ["branch", "--show-current"], { cwd: DASH_HOME, encoding: "utf8" }).trim() || null;
+    } catch {}
+    try {
+      value.upstream = execFileSync("git", ["rev-parse", "--abbrev-ref", "@{u}"], { cwd: DASH_HOME, encoding: "utf8" }).trim() || null;
+    } catch { /* no upstream configured — leave null */ }
+    try {
+      const status = execFileSync("git", ["status", "--porcelain"], { cwd: DASH_HOME, encoding: "utf8" });
+      value.uncommitted = status
+        .split("\n")
+        .filter(Boolean)
+        .map(line => ({ status: line.slice(0, 2).trim() || "?", path: line.slice(3).trim() }));
+    } catch {}
+    if (value.upstream) {
+      try {
+        const unpushed = execFileSync("git", ["log", "@{u}..HEAD", "--pretty=%h %s"], { cwd: DASH_HOME, encoding: "utf8" });
+        value.unpushed = unpushed
+          .split("\n")
+          .filter(Boolean)
+          .map(line => {
+            const idx = line.indexOf(" ");
+            return idx > 0
+              ? { sha: line.slice(0, idx), subject: line.slice(idx + 1) }
+              : { sha: line, subject: "" };
+          });
+      } catch {}
+    }
+    value.total = value.uncommitted.length + value.unpushed.length;
+    pendingCache = { value, at: now };
+    res.json(value);
+  });
+
   // Bridge restart — exits the current process so the supervisor (bin/venture-os.ts
   // in parent mode) respawns a fresh bridge. The frontend's WebSocket reconnect
   // logic brings the status ring back to green within ~1s of the new bridge

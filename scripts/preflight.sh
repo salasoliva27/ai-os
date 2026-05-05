@@ -44,13 +44,15 @@ if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_KEY" ]; then
   if [ "$MEM_STATS" = "FAIL" ] || echo "$MEM_STATS" | grep -q '"message"'; then
     echo "  Supabase memory: ✗ UNREACHABLE"
   else
-    TOTAL=$(echo "$MEM_STATS" | python3 -c "import json,sys; data=json.load(sys.stdin); print(len(data))" 2>/dev/null || echo "0")
-    TYPES=$(echo "$MEM_STATS" | python3 -c "
-import json,sys
-from collections import Counter
-data=json.load(sys.stdin)
-counts=Counter(r['type'] for r in data)
-print(', '.join(f'{t}:{c}' for t,c in counts.most_common()))
+    TOTAL=$(echo "$MEM_STATS" | node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{try{console.log(JSON.parse(s).length)}catch{console.log(0)}})" 2>/dev/null || echo "0")
+    TYPES=$(echo "$MEM_STATS" | node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try {
+    const d=JSON.parse(s); const c={};
+    for(const r of d) c[r.type]=(c[r.type]||0)+1;
+    process.stdout.write(Object.entries(c).sort((a,b)=>b[1]-a[1]).map(([t,n])=>t+':'+n).join(', '));
+  } catch(e){ process.stdout.write('unknown'); }
+});
 " 2>/dev/null || echo "unknown")
     echo "  Supabase memory: ✓ ${TOTAL} memories (${TYPES})"
   fi
@@ -61,22 +63,23 @@ print(', '.join(f'{t}:{c}' for t,c in counts.most_common()))
     -H "apikey: ${SUPABASE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_KEY}" 2>/dev/null || echo "[]")
 
-  LAST_DATE=$(echo "$LAST_MEM" | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-if data: print(data[0]['created_at'][:10])
-else: print('never')
+  LAST_DATE=$(echo "$LAST_MEM" | node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try { const d=JSON.parse(s); console.log(d.length?d[0].created_at.slice(0,10):'never'); }
+  catch(e){ console.log('unknown'); }
+});
 " 2>/dev/null || echo "unknown")
   echo "  Last memory written: ${LAST_DATE}"
 
   # Gap warning
-  DAYS_SINCE=$(python3 -c "
-from datetime import datetime
-try:
-    last=datetime.strptime('${LAST_DATE}','%Y-%m-%d')
-    gap=(datetime.now()-last).days
-    if gap>1: print(f'  ⚠ {gap} DAYS since last memory — learning gap detected')
-except: pass
+  DAYS_SINCE=$(node -e "
+try {
+  const last=new Date('${LAST_DATE}');
+  if(!isNaN(last)){
+    const gap=Math.floor((Date.now()-last.getTime())/86400000);
+    if(gap>1) console.log('  ⚠ '+gap+' DAYS since last memory — learning gap detected');
+  }
+} catch(e) {}
 " 2>/dev/null)
   [ -n "$DAYS_SINCE" ] && echo "$DAYS_SINCE"
 
@@ -88,20 +91,16 @@ except: pass
     -H "apikey: ${SUPABASE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_KEY}" 2>/dev/null || echo "[]")
 
-  ANCHOR_AGE=$(echo "$ANCHOR_RESP" | python3 -c "
-import json, sys
-from datetime import datetime, timezone
-try:
-    data = json.loads(sys.stdin.read())
-    if not isinstance(data, list) or not data:
-        print('MISSING')
-    else:
-        ts = data[0]['created_at'].replace('Z','+00:00')
-        dt = datetime.fromisoformat(ts)
-        age = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-        print(f'FRESH:{age:.0f}' if age < 48 else f'STALE:{age:.0f}')
-except Exception as e:
-    print('MISSING')
+  ANCHOR_AGE=$(echo "$ANCHOR_RESP" | node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try {
+    const d=JSON.parse(s);
+    if(!Array.isArray(d)||!d.length){ console.log('MISSING'); return; }
+    const dt=new Date(d[0].created_at);
+    const age=(Date.now()-dt.getTime())/3600000;
+    console.log((age<48?'FRESH:':'STALE:')+Math.round(age));
+  } catch(e){ console.log('MISSING'); }
+});
 " 2>/dev/null)
 
   case "$ANCHOR_AGE" in
@@ -249,13 +248,11 @@ if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_KEY" ]; then
     -H "apikey: ${SUPABASE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_KEY}" 2>/dev/null || echo "[]")
 
-  ANCHOR_FOUND=$(echo "$ANCHOR_CONTENT" | python3 -c "
-import json, sys
-try:
-    data = json.loads(sys.stdin.read())
-    print('yes' if isinstance(data, list) and data else 'no')
-except Exception:
-    print('no')
+  ANCHOR_FOUND=$(echo "$ANCHOR_CONTENT" | node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try { const d=JSON.parse(s); console.log(Array.isArray(d)&&d.length?'yes':'no'); }
+  catch(e){ console.log('no'); }
+});
 " 2>/dev/null)
 
   # Fallback: if no tagged anchor, grab the most recent session-type memory
@@ -271,28 +268,30 @@ except Exception:
     ANCHOR_IS_FALLBACK=0
   fi
 
-  echo "$ANCHOR_CONTENT" | ANCHOR_IS_FALLBACK="$ANCHOR_IS_FALLBACK" python3 -c "
-import json, os, sys
-try:
-    data = json.loads(sys.stdin.read())
-    if isinstance(data, list) and data:
-        rec = data[0]
-        fallback = os.environ.get('ANCHOR_IS_FALLBACK') == '1'
-        print('')
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-        header = '▸ MOST-RECENT-CONTEXT' if not fallback else '▸ SESSION-MEMORY FALLBACK  (no most-recent-context tag found)'
-        print(f'{header}  (written {rec[\"created_at\"][:19]}Z)')
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-        if fallback:
-            print('⚠ Previous session did NOT write a `most-recent-context`-tagged handoff.')
-            print('⚠ Showing the most recent session-type memory as a fallback.')
-            print('⚠ This may be incomplete — verify with Jano before assuming state.')
-            print('')
-        print(rec['content'].strip())
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-        print('')
-except Exception:
-    pass
+  echo "$ANCHOR_CONTENT" | ANCHOR_IS_FALLBACK="$ANCHOR_IS_FALLBACK" node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try {
+    const d=JSON.parse(s);
+    if(!Array.isArray(d)||!d.length) return;
+    const rec=d[0];
+    const fallback=process.env.ANCHOR_IS_FALLBACK==='1';
+    const bar='━'.repeat(58);
+    console.log('');
+    console.log(bar);
+    const header=fallback ? '▸ SESSION-MEMORY FALLBACK  (no most-recent-context tag found)' : '▸ MOST-RECENT-CONTEXT';
+    console.log(header+'  (written '+rec.created_at.slice(0,19)+'Z)');
+    console.log(bar);
+    if(fallback){
+      console.log('⚠ Previous session did NOT write a \`most-recent-context\`-tagged handoff.');
+      console.log('⚠ Showing the most recent session-type memory as a fallback.');
+      console.log('⚠ This may be incomplete — verify with Jano before assuming state.');
+      console.log('');
+    }
+    console.log((rec.content||'').trim());
+    console.log(bar);
+    console.log('');
+  } catch(e) {}
+});
 " 2>/dev/null
 
   # Last 3 corrections — the rules learned from prior failures
@@ -301,27 +300,26 @@ except Exception:
     -H "apikey: ${SUPABASE_KEY}" \
     -H "Authorization: Bearer ${SUPABASE_KEY}" 2>/dev/null || echo "[]")
 
-  echo "$CORRECTIONS" | python3 -c "
-import json, sys
-try:
-    data = json.loads(sys.stdin.read())
-    if isinstance(data, list) and data:
-        print('▸ RECENT CORRECTIONS (do not repeat)')
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-        for i, rec in enumerate(data, 1):
-            date = rec['created_at'][:10]
-            # Strip the 'CORRECTION:' prefix if present. Print in full — the
-            # RULE sits at the end of the body and truncation loses the point.
-            body = rec['content'].strip()
-            if body.startswith('CORRECTION:'):
-                body = body[len('CORRECTION:'):].strip()
-            print(f'[{i}] {date}')
-            print(body)
-            print('')
-        print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-        print('')
-except Exception:
-    pass
+  echo "$CORRECTIONS" | node -e "
+let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{
+  try {
+    const d=JSON.parse(s);
+    if(!Array.isArray(d)||!d.length) return;
+    const bar='━'.repeat(58);
+    console.log('▸ RECENT CORRECTIONS (do not repeat)');
+    console.log(bar);
+    d.forEach((rec,i)=>{
+      const date=(rec.created_at||'').slice(0,10);
+      let body=(rec.content||'').trim();
+      if(body.startsWith('CORRECTION:')) body=body.slice('CORRECTION:'.length).trim();
+      console.log('['+(i+1)+'] '+date);
+      console.log(body);
+      console.log('');
+    });
+    console.log(bar);
+    console.log('');
+  } catch(e) {}
+});
 " 2>/dev/null
 fi
 
