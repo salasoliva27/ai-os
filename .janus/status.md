@@ -4,9 +4,9 @@ stage: dev
 phase: ""
 phaseProgress: 0
 summary: "Blank-slate AI workspace template. Chat-only on first boot — onboarding decides which tools and windows you get."
-lastSyncedAt: "2026-04-30T19:01:15.427Z"
-lastSyncedCommit: "ad10d50"
-lastSyncedCommitMessage: "fix: harden template auto updates"
+lastSyncedAt: "2026-05-05T20:00:05.308Z"
+lastSyncedCommit: "8c89e7f"
+lastSyncedCommitMessage: "feat(brand): add AI OS.cmd (per-instance launcher, JANUS_BRAND=AI OS)"
 ---
 
 ## Next Steps
