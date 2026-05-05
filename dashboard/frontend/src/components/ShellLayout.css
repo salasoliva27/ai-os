@@ -1,0 +1,50 @@
+.resize-handle {
+  background: color-mix(in oklch, var(--color-text-muted) 3%, transparent);
+  transition: background 0.2s ease;
+  position: relative;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  border-radius: 1px;
+  background: color-mix(in oklch, var(--color-text-muted) 8%, transparent);
+  transition: background 0.2s ease;
+}
+
+.resize-handle--vertical::after {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 24px;
+}
+
+.resize-handle--horizontal::after {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 24px;
+  height: 2px;
+}
+
+.resize-handle:hover,
+.resize-handle[data-resize-handle-active] {
+  background: color-mix(in oklch, var(--color-accent) 6%, transparent);
+}
+
+.resize-handle:hover::after,
+.resize-handle[data-resize-handle-active]::after {
+  background: color-mix(in oklch, var(--color-accent) 60%, transparent);
+  box-shadow: 0 0 8px color-mix(in oklch, var(--color-accent) 30%, transparent);
+}
+
+.resize-handle--vertical {
+  width: 5px;
+  cursor: col-resize;
+}
+
+.resize-handle--horizontal {
+  height: 5px;
+  cursor: row-resize;
+}

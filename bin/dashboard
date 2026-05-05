@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Launch Venture OS Dashboard
+# Usage: dashboard          (start the dashboard)
+#        dashboard stop      (kill the dashboard process)
+#        dashboard status    (check if running)
+set -e
+
+DASHBOARD_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../dashboard" && pwd)"
+PORT="${VENTURE_OS_PORT:-3100}"
+
+case "${1:-start}" in
+  start)
+    # Kill any existing process
+    pid=$(lsof -ti :$PORT 2>/dev/null || true)
+    [ -n "$pid" ] && kill $pid 2>/dev/null && echo "Killed stale process on :$PORT"
+    sleep 0.3
+
+    cd "$DASHBOARD_DIR"
+    echo "Building frontend..."
+    npm run build:frontend
+    echo "Starting Venture OS Dashboard on http://localhost:$PORT"
+    exec npx tsx bin/venture-os.ts
+    ;;
+  stop)
+    pid=$(lsof -ti :$PORT 2>/dev/null || true)
+    if [ -n "$pid" ]; then
+      kill $pid 2>/dev/null
+      echo "Dashboard stopped (was PID $pid on :$PORT)"
+    else
+      echo "Dashboard not running on :$PORT"
+    fi
+    ;;
+  status)
+    pid=$(lsof -ti :$PORT 2>/dev/null || true)
+    if [ -n "$pid" ]; then
+      echo "Dashboard running on :$PORT (PID $pid)"
+    else
+      echo "Dashboard not running"
+    fi
+    ;;
+  *)
+    echo "Usage: dashboard [start|stop|status]"
+    exit 1
+    ;;
+esac

@@ -1,28 +1,38 @@
 {
-  "name": "ai-os-dashboard",
+  "name": "venture-os-dashboard",
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "venture-os": "./dist/bin/venture-os.js"
+  },
   "scripts": {
-    "dev": "npm run build:frontend && tsx bridge/server.ts",
-    "dev:hmr": "tsx bridge/server.ts & cd frontend && npx vite --host 0.0.0.0",
+    "dev": "npm run build:frontend && tsx bin/venture-os.ts",
+    "dev:hmr": "tsx bin/venture-os.ts & cd frontend && npx vite --host 0.0.0.0",
+    "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
     "build": "npm run build:frontend && tsc",
-    "start": "node dist/bridge/server.js"
+    "start": "node dist/bin/venture-os.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.32.1",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.105",
+    "@types/pg": "^8.20.0",
     "bcryptjs": "^3.0.3",
+    "chokidar": "^5.0.0",
     "cookie-session": "^2.1.1",
-    "express": "^5.0.0",
-    "ws": "^8.18.0"
+    "express": "^5.2.1",
+    "pg": "^8.20.0",
+    "puppeteer-core": "^24.41.0",
+    "snowflake-sdk": "^2.4.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-session": "^2.0.49",
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.10.0",
-    "@types/ws": "^8.5.13",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.6.0",
+    "@types/snowflake-sdk": "^1.6.24",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
   }
 }

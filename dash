@@ -1,116 +1,124 @@
 #!/usr/bin/env bash
-# ai-os launcher — update template, install runtime deps, build UI, start bridge.
+# Janus Dashboard launcher — run from anywhere in the repo
+# Usage: ./dash
 set -e
 
+# Two-mode launcher:
+#   1) Run from janus-ia directly: ./dash            → WORKSPACE_ROOT=/workspaces/janus-ia
+#   2) Run from a wrapper in another repo: the wrapper sets JANUS_DASH_HOME to
+#      the janus-ia clone and exports WORKSPACE_ROOT=<caller's repo> before
+#      exec-ing this script. Then DASH points at janus-ia's dashboard/ but the
+#      bridge reads/writes the caller's workspace.
+#
+# When WORKSPACE_ROOT is unset (mode 1), default to the repo containing this
+# script so everything continues to work in janus-ia.
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-WORKSPACE_ROOT="${WORKSPACE_ROOT:-$SCRIPT_DIR}"
-PORT="${AI_OS_PORT:-3100}"
-OPEN_BROWSER="${AI_OS_OPEN_BROWSER:-0}"
+if [ -z "${WORKSPACE_ROOT:-}" ]; then
+  WORKSPACE_ROOT="$SCRIPT_DIR"
+fi
+export WORKSPACE_ROOT
+
+# Find the janus-ia dashboard regardless of where we were invoked from.
+DASH_HOME="${JANUS_DASH_HOME:-$SCRIPT_DIR}"
+DASH="$DASH_HOME/dashboard"
+PORT="${VENTURE_OS_PORT:-3100}"
+OPEN_BROWSER="${JANUS_OPEN_BROWSER:-0}"
 if [ "${1:-}" = "--open" ]; then
   OPEN_BROWSER=1
   shift
 fi
-export WORKSPACE_ROOT
-export PORT
 
+ENV_FILES_LOADED=0
 load_env_file() {
-  local file="$1"
+  local file="$1" label="$2"
   [ -f "$file" ] || return 0
   set -a
   # shellcheck disable=SC1090
   . "$file"
   set +a
-  echo "• loaded credentials from .env"
+  ENV_FILES_LOADED=1
+  echo "• loaded credentials from $label"
 }
 
-is_ai_os_template_url() {
-  printf "%s" "$1" | grep -Eq 'github.com[:/]salasoliva27/ai-os(\.git)?$'
-}
+# Load credentials from three safe local sources, in precedence order:
+#   1) <workspace>/.env  — created by the dashboard for forks/shared installs.
+#   2) ~/dotfiles/.env   — canonical dotfiles repo location (Windows + Mac).
+#   3) ~/.env            — legacy Codespace convention; loaded last so it wins.
+#
+# Secrets are never read from git-tracked files. If none exist, the UI
+# first-run flow asks the user to sign in or paste their own provider keys.
+load_env_file "$WORKSPACE_ROOT/.env" "workspace .env"
+if [ "$HOME/dotfiles/.env" != "$WORKSPACE_ROOT/.env" ]; then
+  load_env_file "$HOME/dotfiles/.env" "dotfiles .env"
+fi
+if [ "$HOME/.env" != "$WORKSPACE_ROOT/.env" ] && [ "$HOME/.env" != "$HOME/dotfiles/.env" ]; then
+  load_env_file "$HOME/.env" "home .env"
+fi
+if [ "$ENV_FILES_LOADED" != "1" ]; then
+  echo "• no .env found — first-run setup will ask for this user's own credentials"
+fi
 
-template_remote() {
-  local origin_url repo_name
-  if git remote get-url template >/dev/null 2>&1; then
-    echo "template"
-  elif git remote get-url upstream >/dev/null 2>&1; then
-    echo "upstream"
-  elif origin_url="$(git remote get-url origin 2>/dev/null)" && is_ai_os_template_url "$origin_url"; then
-    repo_name="$(basename "$WORKSPACE_ROOT")"
-    if [ "$repo_name" != "ai-os" ]; then
-      git remote rename origin template 2>/dev/null || true
-      echo "• renamed origin → template so this clone can use its own origin later" >&2
-      echo "template"
-    else
-      echo "origin"
-    fi
-  else
-    git remote add template https://github.com/salasoliva27/ai-os.git 2>/dev/null || true
-    echo "template"
-  fi
-}
-
-auto_update_from_template() {
-  [ "${AI_OS_AUTO_UPDATE:-1}" = "1" ] || return 0
-  [ -d "$WORKSPACE_ROOT/.git" ] || return 0
+auto_update_repo() {
+  local repo="$1" label="$2"
+  [ "${JANUS_AUTO_UPDATE:-1}" = "1" ] || return 0
+  [ -d "$repo/.git" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
 
   (
-    cd "$WORKSPACE_ROOT"
-    local remote remote_ref dirty local_ref base_ref
-    remote="$(template_remote)"
-    echo "• checking ai-os template updates..."
-    git fetch --quiet "$remote" || {
-      echo "  ⚠ could not fetch template updates, continuing offline"
-      return 0
-    }
-    remote_ref="$(git rev-parse --verify "$remote/main" 2>/dev/null || git rev-parse --verify "$remote/master" 2>/dev/null || true)"
-    [ -n "$remote_ref" ] || return 0
-    dirty="$(git status --porcelain --untracked-files=no 2>/dev/null || true)"
+    cd "$repo"
+    local branch upstream dirty
+    branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+    [ -n "$branch" ] && [ "$branch" != "HEAD" ] || return 0
+    upstream=$(git rev-parse --abbrev-ref --symbolic-full-name "@{u}" 2>/dev/null || true)
+    [ -n "$upstream" ] || return 0
+    dirty=$(git status --porcelain --untracked-files=no 2>/dev/null || true)
     if [ -n "$dirty" ]; then
-      echo "  ⚠ local tracked edits present, skipping template update"
+      echo "• $label has local edits, skipping auto-update"
       return 0
     fi
-    local_ref="$(git rev-parse HEAD)"
-    base_ref="$(git merge-base HEAD "$remote_ref")"
-    if [ "$local_ref" = "$remote_ref" ]; then
-      echo "  ✓ template up to date"
-    elif [ "$local_ref" = "$base_ref" ]; then
-      git merge --ff-only --quiet "$remote_ref" \
-        && echo "  ✓ updated to $(git rev-parse --short HEAD)" \
-        || echo "  ⚠ fast-forward failed, continuing with current checkout"
-    else
-      echo "  • this AI has local commits; trying non-destructive template merge"
-      if git merge --no-edit --quiet "$remote_ref"; then
-        echo "  ✓ merged template updates"
+    echo "• checking $label updates..."
+    if git fetch --quiet; then
+      local local_ref remote_ref base_ref
+      local_ref=$(git rev-parse HEAD)
+      remote_ref=$(git rev-parse "@{u}")
+      base_ref=$(git merge-base HEAD "@{u}")
+      if [ "$local_ref" = "$remote_ref" ]; then
+        echo "  ✓ $label up to date"
+      elif [ "$local_ref" = "$base_ref" ]; then
+        git merge --ff-only --quiet "@{u}" \
+          && echo "  ✓ $label updated to $(git rev-parse --short HEAD)" \
+          || echo "  ⚠ $label update failed, continuing with current checkout"
       else
-        git merge --abort >/dev/null 2>&1 || true
-        echo "  ⚠ template update has conflicts, continuing without applying it"
+        echo "  ⚠ $label has diverged from $upstream, skipping auto-update"
       fi
+    else
+      echo "  ⚠ could not check $label updates, continuing offline"
     fi
   )
 }
 
-kill_port() {
-  local port="$1"
-  if command -v lsof >/dev/null 2>&1; then
-    local pid
-    pid="$(lsof -ti :"$port" 2>/dev/null || true)"
-    [ -n "$pid" ] && kill $pid 2>/dev/null || true
-    [ -n "$pid" ] && echo "• killed stale process on :$port"
-  elif command -v netstat >/dev/null 2>&1 && command -v taskkill >/dev/null 2>&1; then
-    local pids
-    pids="$(netstat -ano | grep -E "LISTENING[[:space:]]+[0-9]+$" | grep -E ":$port[[:space:]]" | awk '{print $NF}' | sort -u)"
-    if [ -n "$pids" ]; then
-      for pid in $pids; do
-        taskkill //F //PID "$pid" >/dev/null 2>&1 || true
-      done
-      echo "• killed stale process on :$port"
-    fi
-  fi
-  return 0
-}
+auto_update_repo "$DASH_HOME" "Janus IA"
+if [ "$WORKSPACE_ROOT" != "$DASH_HOME" ]; then
+  auto_update_repo "$WORKSPACE_ROOT" "workspace"
+fi
 
-ensure_node() {
-  if command -v npm >/dev/null 2>&1; then return 0; fi
+cd "$DASH"
+
+# Ensure provider CLIs (claude / codex / gemini) are on PATH. When the launcher
+# is invoked from cmd.exe (double-click), the inherited PATH doesn't include
+# common per-user install locations — execFileSync("claude") in the bridge then
+# fails with ENOENT and the auth probe reports a generic failure even though
+# the CLI is installed and authorized. Idempotent prepends:
+for bin_dir in "$HOME/.local/bin" "$HOME/AppData/Roaming/npm" "$HOME/AppData/Local/Programs/Python/Python311/Scripts"; do
+  if [ -d "$bin_dir" ] && [[ ":$PATH:" != *":$bin_dir:"* ]]; then
+    export PATH="$bin_dir:$PATH"
+  fi
+done
+
+# Ensure npm/npx are on PATH. On Windows Git Bash / MSYS, fresh shells won't see
+# the MSI-installed Node until restart — so probe common install locations and
+# prepend whichever one is present. Idempotent: no-op if npm is already found.
+if ! command -v npm >/dev/null 2>&1; then
   for candidate in \
     "/c/Program Files/nodejs" \
     "/c/Program Files (x86)/nodejs" \
@@ -120,10 +128,16 @@ ensure_node() {
     if [ -x "$candidate/npm.cmd" ] || [ -x "$candidate/npm" ]; then
       export PATH="$candidate:$PATH"
       echo "• found node at $candidate"
-      return 0
+      break
     fi
   done
+fi
 
+# Still no npm? Try to install Node.js automatically. Platform-specific:
+# Windows Git Bash → download portable zip to ~/bin/nodejs (no admin).
+# macOS → `brew install node` if brew present.
+# Linux → hint only (too many flavours to auto-pick safely).
+if ! command -v npm >/dev/null 2>&1; then
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
       echo "• node not found — installing portable Node.js LTS to ~/bin/nodejs"
@@ -139,64 +153,188 @@ ensure_node() {
         export PATH="$HOME/bin/nodejs:$PATH"
         rm -f "$TMPDIR/node.zip"
         echo "  ✓ installed Node.js $NODE_VERSION at ~/bin/nodejs"
+      else
+        echo "  ✗ portable Node.js install failed — install manually from https://nodejs.org/" >&2
       fi
       ;;
     Darwin)
-      command -v brew >/dev/null 2>&1 && brew install node >/dev/null 2>&1 || true
+      if command -v brew >/dev/null 2>&1; then
+        echo "• node not found — running: brew install node"
+        brew install node >/dev/null 2>&1 && echo "  ✓ node installed via brew"
+      else
+        echo "✗ node not found and Homebrew missing. Install Node from https://nodejs.org/ or: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"" >&2
+      fi
+      ;;
+    *)
+      echo "✗ node not found. Install Node.js LTS (e.g. via nvm: https://github.com/nvm-sh/nvm) and re-run ./dash" >&2
       ;;
   esac
-}
-
-open_browser_when_ready() {
-  [ "$OPEN_BROWSER" = "1" ] || return 0
-  (
-    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-      curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
-      sleep 0.5
-    done
-    url="http://localhost:$PORT"
-    case "$(uname -s)" in
-      Darwin) open "$url" >/dev/null 2>&1 || true ;;
-      MINGW*|MSYS*|CYGWIN*) cmd.exe /c start "" "$url" >/dev/null 2>&1 || true ;;
-      *) command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" >/dev/null 2>&1 || true ;;
-    esac
-  ) &
-}
-
-load_env_file "$WORKSPACE_ROOT/.env"
-auto_update_from_template
-ensure_node
-
+fi
 if ! command -v npm >/dev/null 2>&1; then
-  echo "✗ npm not found. Install Node.js LTS and re-run ./dash" >&2
+  echo "✗ npm still not on PATH after install attempt — open a new shell or adjust PATH and re-run ./dash" >&2
   exit 1
 fi
 
+# Kill any stale process on the port. lsof isn't available on Windows Git Bash,
+# so fall back to netstat + taskkill when running under MSYS/MINGW.
+kill_port() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    local pid
+    pid=$(lsof -ti :"$port" 2>/dev/null || true)
+    [ -n "$pid" ] && kill $pid 2>/dev/null || true
+    [ -n "$pid" ] && echo "• killed stale process on :$port"
+  elif command -v netstat >/dev/null 2>&1 && command -v taskkill >/dev/null 2>&1; then
+    # Windows: parse PID from `netstat -ano` LISTENING lines for this port
+    local pids
+    pids=$(netstat -ano | grep -E "LISTENING[[:space:]]+[0-9]+$" | grep -E ":$port[[:space:]]" | awk '{print $NF}' | sort -u)
+    if [ -n "$pids" ]; then
+      for pid in $pids; do
+        taskkill //F //PID "$pid" >/dev/null 2>&1 || true
+      done
+      echo "• killed stale process on :$port"
+    fi
+  fi
+  return 0
+}
 kill_port "$PORT"
 sleep 0.3
 
-cd "$WORKSPACE_ROOT/dashboard"
-if [ ! -d node_modules ]; then
-  echo "• installing dashboard deps..."
-  npm install --silent
-fi
-if [ ! -d frontend/node_modules ]; then
-  echo "• installing frontend deps..."
-  (cd frontend && npm install --silent)
+# Install or refresh deps after an auto-update. `node_modules` can exist while
+# package files changed in the pulled revision, so compare mtimes as well.
+npm_install_if_needed() {
+  local dir="$1" label="$2"
+  [ -f "$dir/package.json" ] || return 0
+  local marker="$dir/node_modules/.janus-install-stamp"
+  local needs_install=0
+  if [ ! -d "$dir/node_modules" ]; then
+    needs_install=1
+  elif [ "$dir/package.json" -nt "$marker" ]; then
+    needs_install=1
+  elif [ -f "$dir/package-lock.json" ] && [ "$dir/package-lock.json" -nt "$marker" ]; then
+    needs_install=1
+  elif [ -f "$dir/npm-shrinkwrap.json" ] && [ "$dir/npm-shrinkwrap.json" -nt "$marker" ]; then
+    needs_install=1
+  fi
+
+  if [ "$needs_install" = "1" ]; then
+    echo "• installing $label deps..."
+    (cd "$dir" && npm install --silent)
+    mkdir -p "$dir/node_modules"
+    touch "$marker"
+  fi
+}
+
+npm_install_if_needed "$DASH" "bridge"
+npm_install_if_needed "$DASH/frontend" "frontend"
+npm_install_if_needed "$WORKSPACE_ROOT/mcp-servers/memory" "memory MCP"
+
+# Provider CLIs (claude / codex / gemini) — install any that aren't on PATH.
+# Each adapter in agent-registry.ts spawns these as subprocesses; if they're
+# missing, the corresponding agent silently fails. We install from npm rather
+# than prompting the user. Failures are non-fatal: the UI will show the
+# adapter as "not available" with a specific reason.
+#
+# Set DASH_SKIP_PROVIDER_INSTALL=1 to skip this block (e.g. CI, air-gapped).
+if [ -z "${DASH_SKIP_PROVIDER_INSTALL:-}" ]; then
+  install_cli() {
+    local cli="$1" pkg="$2"
+    if command -v "$cli" >/dev/null 2>&1; then return 0; fi
+    echo "• installing $cli ($pkg)..."
+    if npm install -g "$pkg" --silent >/dev/null 2>&1; then
+      if command -v "$cli" >/dev/null 2>&1; then
+        echo "  ✓ $cli ready"
+      else
+        # npm succeeded but the binary isn't on PATH yet — likely a fresh shell
+        # that hasn't picked up the global bin dir. Try to surface it.
+        local npm_bin
+        npm_bin=$(npm bin -g 2>/dev/null || true)
+        if [ -n "$npm_bin" ] && [ -x "$npm_bin/$cli" ]; then
+          export PATH="$npm_bin:$PATH"
+          echo "  ✓ $cli ready (added $npm_bin to PATH for this run)"
+        else
+          echo "  ⚠ $cli installed but not on PATH — open a new shell or add \$(npm bin -g) to PATH"
+        fi
+      fi
+    else
+      echo "  ⚠ $cli install failed — adapter will show as unavailable in the UI"
+    fi
+  }
+  install_cli claude "@anthropic-ai/claude-code"
+  install_cli codex  "@openai/codex"
+  install_cli gemini "@google/gemini-cli"
 fi
 
+# Rebuild frontend only if sources are newer than the built bundle
 NEEDS_BUILD=1
-if [ -f frontend/dist/index.html ]; then
-  newest_src="$(find frontend/src frontend/public frontend/index.html -type f -newer frontend/dist/index.html 2>/dev/null | head -1)"
-  [ -z "$newest_src" ] && NEEDS_BUILD=0
+BUILD_REV=""
+BUILD_STAMP="frontend/dist/.janus-build-rev"
+if command -v git >/dev/null 2>&1 && [ -d "$DASH_HOME/.git" ]; then
+  BUILD_REV=$(git -C "$DASH_HOME" rev-parse HEAD 2>/dev/null || true)
+fi
+if [ -d "frontend/dist/assets" ] && [ -f "frontend/dist/index.html" ]; then
+  newest_src=$(find frontend/src frontend/public frontend/index.html -type f -newer frontend/dist/index.html 2>/dev/null | head -1)
+  if [ -z "$newest_src" ]; then
+    if [ -n "$BUILD_REV" ]; then
+      [ -f "$BUILD_STAMP" ] && [ "$(cat "$BUILD_STAMP" 2>/dev/null)" = "$BUILD_REV" ] && NEEDS_BUILD=0
+    else
+      NEEDS_BUILD=0
+    fi
+  fi
 fi
 if [ "$NEEDS_BUILD" = "1" ]; then
   echo "• building frontend..."
   npm run build:frontend --silent
+  [ -n "$BUILD_REV" ] && printf "%s" "$BUILD_REV" > "$BUILD_STAMP"
 else
   echo "• frontend up to date, skipping build"
 fi
 
-echo "• starting ai-os on http://localhost:$PORT"
-open_browser_when_ready
-exec npx tsx bridge/server.ts
+# Codex CLI stores creds in ~/.codex/ — OPENAI_API_KEY in env alone is NOT
+# enough. If the key is present but codex isn't logged in, install it silently.
+if command -v codex >/dev/null 2>&1 && [ -n "${OPENAI_API_KEY:-}" ]; then
+  if ! codex login status 2>&1 | grep -q "Logged in"; then
+    echo "• installing OpenAI key into codex credential store..."
+    printf "%s" "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null 2>&1 \
+      && echo "  ✓ codex logged in" \
+      || echo "  ⚠ codex login failed — codex agent may not work until you run: printenv OPENAI_API_KEY | codex login --with-api-key"
+  fi
+fi
+
+echo "• workspace: $WORKSPACE_ROOT"
+echo "• starting dashboard on http://localhost:$PORT"
+echo ""
+
+if [ "$OPEN_BROWSER" = "1" ]; then
+  (
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      if command -v curl >/dev/null 2>&1; then
+        curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+      elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && break
+      else
+        sleep 3
+        break
+      fi
+      sleep 0.5
+    done
+    url="http://localhost:$PORT"
+    case "$(uname -s)" in
+      Darwin)
+        open "$url" >/dev/null 2>&1 || true
+        ;;
+      MINGW*|MSYS*|CYGWIN*)
+        cmd.exe /c start "" "$url" >/dev/null 2>&1 || true
+        ;;
+      *)
+        if command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "$url" >/dev/null 2>&1 || true
+        elif command -v sensible-browser >/dev/null 2>&1; then
+          sensible-browser "$url" >/dev/null 2>&1 || true
+        fi
+        ;;
+    esac
+  ) &
+fi
+
+exec npx tsx bin/venture-os.ts

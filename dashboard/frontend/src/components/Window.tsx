@@ -10,7 +10,7 @@ interface WindowProps {
 
 type ResizeDir = 'e' | 'w' | 'n' | 's' | 'ne' | 'nw' | 'se' | 'sw';
 
-const TOPBAR_H = 44;
+const TOPBAR_H = 40;
 const TASKBAR_H = 34;
 
 export function Window({ state, children }: WindowProps) {
@@ -21,6 +21,7 @@ export function Window({ state, children }: WindowProps) {
     dispatch({ type: 'FOCUS', id: state.id });
   }, [dispatch, state.id]);
 
+  // ── Free drag with magnetic snap to viewport edges + other windows ──
   const onDragStart = useCallback((e: ReactPointerEvent) => {
     if ((e.target as HTMLElement).closest('.wm-window__controls')) return;
     e.preventDefault();
@@ -46,22 +47,27 @@ export function Window({ state, children }: WindowProps) {
         const vpW = window.innerWidth;
         const vpH = window.innerHeight - TOPBAR_H - TASKBAR_H;
 
+        // Collect snap targets: viewport edges + other window edges
         const edges = findSnapEdges(layout.windows, state.id);
         const hTargets = [0, vpW, ...edges.lefts, ...edges.rights];
         const vTargets = [0, vpH, ...edges.tops, ...edges.bottoms];
 
+        // Snap left edge
         const leftSnap = snapValue(newX, hTargets, snapH.left);
         if (leftSnap.isSnapped) { newX = leftSnap.snapped; }
         snapH.left = leftSnap.isSnapped;
 
+        // Snap right edge
         const rightSnap = snapValue(newX + winW, hTargets, snapH.right);
         if (rightSnap.isSnapped && !leftSnap.isSnapped) { newX = rightSnap.snapped - winW; }
         snapH.right = rightSnap.isSnapped;
 
+        // Snap top edge
         const topSnap = snapValue(newY, vTargets, snapV.top);
         if (topSnap.isSnapped) { newY = topSnap.snapped; }
         snapV.top = topSnap.isSnapped;
 
+        // Snap bottom edge
         const bottomSnap = snapValue(newY + winH, vTargets, snapV.bottom);
         if (bottomSnap.isSnapped && !topSnap.isSnapped) { newY = bottomSnap.snapped - winH; }
         snapV.bottom = bottomSnap.isSnapped;
@@ -80,6 +86,7 @@ export function Window({ state, children }: WindowProps) {
     document.addEventListener('pointerup', onUp);
   }, [dispatch, state.id, state.x, state.y, state.width, state.height, layout.windows]);
 
+  // ── Resize with magnetic snap + shared-border resizing ──
   const onResizeStart = useCallback((dir: ResizeDir) => (e: ReactPointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -89,6 +96,7 @@ export function Window({ state, children }: WindowProps) {
     const startY = e.clientY;
     const orig = { x: state.x, y: state.y, w: state.width, h: state.height };
 
+    // Capture neighbors sharing each edge at drag start (frozen snapshot)
     const neighborsE = dir.includes('e')
       ? findSharedEdgeWindows(layout.windows, state.id, 'left', state.x + state.width)
           .map(w => ({ id: w.id, x: w.x, y: w.y, w: w.width, h: w.height }))
@@ -123,9 +131,11 @@ export function Window({ state, children }: WindowProps) {
         if (dir.includes('s')) newH = orig.h + dy;
         if (dir.includes('n')) { newH = orig.h - dy; newY = orig.y + dy; }
 
+        // Clamp min
         if (newW < state.minWidth) { newW = state.minWidth; if (dir.includes('w')) newX = orig.x + orig.w - state.minWidth; }
         if (newH < state.minHeight) { newH = state.minHeight; if (dir.includes('n')) newY = orig.y + orig.h - state.minHeight; }
 
+        // Snap targets: other windows + viewport (skip snapping when dragging shared borders)
         if (!hasNeighbors) {
           const vpW = window.innerWidth;
           const vpH = window.innerHeight - TOPBAR_H - TASKBAR_H;
@@ -158,27 +168,34 @@ export function Window({ state, children }: WindowProps) {
         if (!hasNeighbors) {
           dispatch({ type: 'RESIZE', id: state.id, x: newX, y: newY, width: newW, height: newH });
         } else {
+          // Batch: resize this window + all neighbors sharing the dragged edge
           const updates: Array<{ id: string; x: number; y: number; width: number; height: number }> = [
             { id: state.id, x: newX, y: newY, width: newW, height: newH },
           ];
+
+          // East edge neighbors: their left edge moves with our right edge
           for (const n of neighborsE) {
             const newNX = n.x + dx;
             const newNW = n.w - dx;
             if (newNW >= 200) updates.push({ id: n.id, x: newNX, y: n.y, width: newNW, height: n.h });
           }
+          // West edge neighbors: their right edge moves with our left edge
           for (const n of neighborsW) {
             const newNW = n.w + dx;
             if (newNW >= 200) updates.push({ id: n.id, x: n.x, y: n.y, width: newNW, height: n.h });
           }
+          // South edge neighbors: their top edge moves with our bottom edge
           for (const n of neighborsS) {
             const newNY = n.y + dy;
             const newNH = n.h - dy;
             if (newNH >= 100) updates.push({ id: n.id, x: n.x, y: newNY, width: n.w, height: newNH });
           }
+          // North edge neighbors: their bottom edge moves with our top edge
           for (const n of neighborsN) {
             const newNH = n.h + dy;
             if (newNH >= 100) updates.push({ id: n.id, x: n.x, y: n.y, width: n.w, height: newNH });
           }
+
           dispatch({ type: 'RESIZE_BATCH', updates });
         }
       });
@@ -196,6 +213,10 @@ export function Window({ state, children }: WindowProps) {
 
   if (state.minimized || !state.visible) return null;
 
+  const lineageLabel = state.lineage
+    ? `L${state.lineage.depth} · ${state.lineage.breadcrumb.join(' > ')}`
+    : null;
+
   return (
     <div
       className={`wm-window ${state.maximized ? 'wm-window--maximized' : ''}`}
@@ -208,7 +229,13 @@ export function Window({ state, children }: WindowProps) {
       }}
       onPointerDown={onFocus}
     >
+      {/* Title bar */}
       <div className="wm-window__titlebar" onPointerDown={onDragStart} onDoubleClick={() => dispatch({ type: 'MAXIMIZE', id: state.id })}>
+        {lineageLabel && (
+          <span className="wm-window__lineage" style={{ color: state.lineage?.color }}>
+            {lineageLabel}
+          </span>
+        )}
         <span className="wm-window__title">{state.title}</span>
         <div className="wm-window__controls">
           <button
@@ -236,10 +263,12 @@ export function Window({ state, children }: WindowProps) {
         </div>
       </div>
 
+      {/* Content */}
       <div className="wm-window__content">
         {children}
       </div>
 
+      {/* 8-direction resize handles */}
       {!state.maximized && (
         <>
           <div className="wm-resize wm-resize--n" onPointerDown={onResizeStart('n')} />

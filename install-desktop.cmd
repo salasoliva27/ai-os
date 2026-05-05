@@ -1,8 +1,9 @@
 @echo off
 setlocal
 
-REM Creates a Desktop shortcut with an icon that delegates to this clone's
-REM AI OS.cmd. The repo launcher still handles template updates on every run.
+REM Double-click installer for Windows.
+REM It creates a Desktop launcher that starts Janus IA from this local repo.
+REM Requires Git Bash, because the main Janus launcher is ./dash.
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
@@ -11,19 +12,16 @@ for /f "usebackq delims=" %%D in (`powershell -NoProfile -Command "[Environment]
 if "%DESKTOP%"=="" set "DESKTOP=%USERPROFILE%\Desktop"
 if not exist "%DESKTOP%" mkdir "%DESKTOP%"
 
-set "SHORTCUT=%DESKTOP%\AI OS.lnk"
-set "ICON=%ROOT%\assets\ai-os.ico"
+set "LAUNCHER=%DESKTOP%\Janus IA.cmd"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ws = New-Object -ComObject WScript.Shell; " ^
-  "$s = $ws.CreateShortcut($env:SHORTCUT); " ^
-  "$s.TargetPath = Join-Path $env:ROOT 'AI OS.cmd'; " ^
-  "$s.WorkingDirectory = $env:ROOT; " ^
-  "$s.IconLocation = $env:ICON; " ^
-  "$s.Save()"
+> "%LAUNCHER%" echo @echo off
+>> "%LAUNCHER%" echo setlocal
+>> "%LAUNCHER%" echo set "ROOT=%ROOT%"
+>> "%LAUNCHER%" echo call "%%ROOT%%\Janus IA.cmd"
 
-echo Installed: "%SHORTCUT%"
+echo Installed: "%LAUNCHER%"
 echo.
-echo Double-click "AI OS" on your Desktop to launch this AI.
+echo Double-click "Janus IA.cmd" on your Desktop to launch the UI.
+echo The UI will still let you switch engines and models from the top bar.
 echo.
 pause

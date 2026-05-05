@@ -1,8 +1,43 @@
-node_modules/
-dist/
 .env
-.dashboard/
-*.log
+*.credentials.json
+node_modules/
+dashboard/dist/
 .DS_Store
-.vscode/
-*.tsbuildinfo
+.playwright-mcp/
+outputs/screenshots/
+*.png
+!dashboard/frontend/public/themes/*.png
+!dashboard/frontend/dist/themes/*.png
+dashboard/frontend/dist/.janus-build-rev
+# Obsidian personal state (do not commit — machine-specific)
+.obsidian/workspace.json
+.obsidian/workspace-mobile.json
+# Chat file uploads — user-submitted, not versioned
+dump/uploads/
+# Local Claude Code state — machine-specific, not versioned
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+**/.claude/settings.local.json
+# Runtime logs
+*.log
+# Sibling-session coordination log (per-session, ephemeral)
+.janus/session-log.jsonl
+# Generated binaries — these go to Drive (Janus_AI/), never git.
+# See AGENTS.md storage/tool routing.
+outputs/**/*.pdf
+outputs/**/*.docx
+outputs/**/*.xlsx
+outputs/**/*.pptx
+outputs/**/*.odt
+outputs/**/*.mp4
+outputs/**/*.mov
+outputs/**/*.webm
+outputs/**/*.avi
+outputs/**/*.mp3
+outputs/**/*.wav
+outputs/**/*.zip
+outputs/**/*.tar.gz
+outputs/**/*.jpg
+outputs/**/*.jpeg
+outputs/**/*.webp
+outputs/**/*.gif

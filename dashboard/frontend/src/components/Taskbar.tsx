@@ -1,17 +1,16 @@
 import { useWindowManager } from '../store/window-store';
-import type { PanelId } from '../types/window';
+import { VersionBadge } from './VersionBadge';
 
-const TYPE_ICONS: Record<PanelId, string> = {
+const TYPE_ICONS: Record<string, string> = {
   chat: '>',
-  credentials: '#',
-  files: '+',
-  tasks: '*',
-  memory: '~',
-  calendar: '@',
-  research: '?',
+  center: '*',
+  bottom: '~',
+  right: '=',
+  calendar: '#',
+  'sql-console': '$',
 };
 
-export function Taskbar({ brand }: { brand: string }) {
+export function Taskbar() {
   const { layout, dispatch } = useWindowManager();
 
   const open = layout.windows.filter(w => w.visible && !w.minimized);
@@ -30,6 +29,11 @@ export function Taskbar({ brand }: { brand: string }) {
           >
             <span className="wm-taskbar__icon">{TYPE_ICONS[w.type] || '?'}</span>
             <span className="wm-taskbar__label">{w.title}</span>
+            {w.lineage && (
+              <span className="wm-taskbar__depth" style={{ background: w.lineage.color }}>
+                L{w.lineage.depth}
+              </span>
+            )}
             {w.closable && (
               <span
                 className="wm-taskbar__x"
@@ -70,7 +74,11 @@ export function Taskbar({ brand }: { brand: string }) {
           </button>
         ))}
       </div>
+      <div className="wm-taskbar__janus-wordmark" aria-label="JANUS">
+        <span className="janus-wordmark__text">JANUS</span>
+      </div>
       <div className="wm-taskbar__actions">
+        <VersionBadge />
         <button
           className="wm-taskbar__reset"
           onClick={() => dispatch({ type: 'RESET' })}
@@ -79,7 +87,6 @@ export function Taskbar({ brand }: { brand: string }) {
           Reset
         </button>
       </div>
-      <div className="wm-taskbar__brand" aria-hidden="true">{brand}</div>
     </div>
   );
 }

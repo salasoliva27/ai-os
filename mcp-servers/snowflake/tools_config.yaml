@@ -1,0 +1,25 @@
+# Snowflake MCP Server — tool enablement config.
+#
+# This config turns on the broadest set of capabilities the official
+# Snowflake-Labs/mcp server supports, so the account can be managed end-to-end
+# (objects, queries, warehouses, roles, users, stages, semantic views, Cortex).
+#
+# Credentials are passed via env vars on the .mcp.json entry — NOT here.
+# Add Cortex Analyst / Search / Agent service entries once they exist in the
+# account; leaving these lists empty is fine and keeps the server running.
+
+agent_services: []
+search_services: []
+analyst_services: []
+
+other_services:
+  object_manager: true       # create/alter/drop/describe databases, schemas, tables, views, warehouses, roles, stages, users
+  query_manager: true        # execute SQL, inspect query history
+  semantic_manager: true     # discover and query semantic views
+
+# Blanket SQL permission — grants the MCP server authority to run any
+# statement type the authenticating Snowflake role is allowed to run.
+# Tighten by replacing `All: true` with an explicit list (Select, Insert,
+# Update, Delete, Create, Alter, Drop, Use, Describe, Show, Grant, Revoke).
+sql_statement_permissions:
+  - All: true

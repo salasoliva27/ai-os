@@ -1,91 +1,96 @@
-# ai-os
+# janus-ia
 
-A blank-slate AI workspace template you can clone and shape via conversation.
+An engine-neutral AI operating system for running a venture portfolio: validates
+ideas, builds products, coordinates legal/financial/calendar, and compounds
+learnings across every build. Claude Code and Codex are processors behind the
+same Janus brain.
 
-- **Chat is the only thing on screen at first.** No pre-installed agents, no
-  pre-loaded memories, no boilerplate to delete.
-- **The AI does its own onboarding.** It asks what kind of AI you want, then
-  enables exactly the panels you need.
-- **Add tools by talking.** When you ask for a capability, the AI walks you
-  through getting the credential and writes it to a gitignored `.env`.
+This is Jano's working brain. The repo is public so you can fork it as a starting
+point for your own setup.
 
-## Quick start
+---
+
+## Using this as a template
+
+The repo ships with the brain framework intact (`AGENTS.md`, Claude/Codex
+adapter entry points, agents, concepts, scripts, dashboard, MCP servers,
+tools/skills registries) and strips out the personal content (Jano's wikis,
+projects, outputs).
+
+1. **Fork** this repo on GitHub.
+2. **Open it in a Codespace** (or clone locally with at least one supported
+   engine CLI installed).
+3. **Strip personal content**:
+   ```bash
+   ./scripts/init-fork.sh
+   ```
+   This removes `wiki/`, `projects/`, `outputs/`, `dump/` and resets
+   `PROJECTS.md`, `learnings/market.md`, `learnings/supabase-registry.md` to
+   empty templates. Re-runnable.
+4. **Launch the dashboard**:
+   ```bash
+   ./dash
+   ```
+   To install a desktop shortcut that starts the same dashboard and opens the
+   browser on your own computer, clone/download the repo there and run
+   `Janus IA.cmd` on Windows to launch directly from the repo,
+   `install-desktop.cmd` on Windows to create a Desktop shortcut,
+   `install-desktop.command` on macOS, or `./scripts/install-launcher.sh` on
+   Linux.
+   First-time laptop setup with dotfiles is documented in
+   [`docs/laptop-setup.md`](docs/laptop-setup.md).
+5. **First turn, tell the AI**: `run discovery`. It will walk you through naming
+   your projects, declaring your stack, and personalizing the agents.
+
+Credentials are deliberately outside this repo. Private installs can mirror
+`dotfiles/.env` into `~/.env`; shared or forked installs use the first-run UI to
+save that user's own credentials into a local gitignored `.env`.
+
+What you keep from the fork: the dispatch protocol, all 16 agents, the
+inline-learning + vault-plasticity rules, the cross-synthesis checklist, the
+MCP/skills/tools registries (with verdicts), and the dashboard.
+
+What you start fresh: your projects, your wikis, your outputs, your memory.
+
+---
+
+## Using `./dash` from other repos (Jano's own setup)
+
+The dashboard is workspace-aware. From any repo, you can launch the same UI
+scoped to that repo by dropping a tiny wrapper in:
 
 ```bash
-git clone https://github.com/salasoliva27/ai-os.git my-ai
-cd my-ai
-./dash --open
+/workspaces/janus-ia/scripts/dash-link /workspaces/<other-repo>
 ```
 
-Open http://localhost:3100. First run asks you to name the AI and connect an
-engine. After that, the chat greets you and asks what you want this workspace
-to be.
-
-You'll need either an Anthropic or OpenAI API key. Either:
-
-- Paste it in the first-run setup screen, or
-- Open the **Credentials** panel later and add more keys.
-
-Credentials are written to this clone's gitignored `.env`. They are not stored
-in the template repo.
-
-## What's in the box
-
-```
-.
-├── CLAUDE.md            # Instructions for the AI itself (read first)
-├── README.md            # This file
-├── dashboard/
-│   ├── bridge/          # Single-file Express + WS server (bridge/server.ts)
-│   └── frontend/        # React + Vite, ~3 components
-├── dash                 # One-shot launcher: update, install, build, run
-├── AI OS.cmd            # Windows double-click launcher
-├── install-desktop.cmd  # Windows Desktop shortcut installer with icon
-├── assets/              # Desktop shortcut icon assets
-├── scripts/setup.sh     # Dependency install helper
-└── .devcontainer/       # GitHub Codespaces config
+Then in that repo:
+```bash
+./dash
 ```
 
-That's the whole template. ~600 lines of code, by design.
+It uses janus-ia's dashboard code but reads/writes its own workspace files
+(`learnings/`, `concepts/`, `wiki/`, memory namespace, etc.). Memory is scoped
+per workspace, so jp-ai's memory stays in jp-ai's namespace.
 
-## How it grows
+Desktop and Samsung home-screen launcher notes live in
+[`docs/launchers.md`](docs/launchers.md).
 
-You start with chat. As you tell the AI what you want, panels appear in the
-topbar (Credentials, Files, Tasks, Memory, Calendar, Research, etc.). Panels
-listed in your profile but not yet implemented show a placeholder — ask the AI
-to scaffold them and it will.
+---
 
-The dashboard's behavior is driven by `.dashboard/profile.json`, which the AI
-writes via a special `<<PROFILE: {...}>>` block the bridge intercepts during
-the first conversation.
+## Layout
 
-## Template updates
+```
+agents/         16 agent specs (developer, ux, legal, financial, ...)
+concepts/       Cross-project patterns (the compounding layer)
+learnings/      Domain knowledge (market, technical, gtm, patterns)
+dashboard/      The UI you launch with ./dash
+mcp-servers/    Local MCP servers (memory, etc.)
+scripts/        Bootstrap, preflight, gdrive, dash-link, init-fork
+tools/          Tool registry + configs
+skills/         Skills registry
+AGENTS.md       Canonical brain, agent registry, and tool contract
+CLAUDE.md       Claude Code compatibility loader
+```
 
-Each clone can become its own AI without changing `salasoliva27/ai-os`.
-Personal state lives in gitignored files (`.env`, `.dashboard/profile.json`) or
-in commits on that person's own repository.
-
-On every `./dash` launch, ai-os fetches template updates and applies them with
-Git:
-
-- If the clone has no local source commits, it fast-forwards.
-- If the clone has local commits, it attempts a normal merge.
-- If tracked files are dirty or a merge would conflict, it skips the update and
-  keeps the current checkout untouched.
-
-For a fully separate AI repo, keep `template` or `upstream` pointed at
-`https://github.com/salasoliva27/ai-os.git` and set `origin` to the user's own
-repo.
-
-When a user clones directly into a differently named folder such as `my-ai`,
-the launcher automatically renames `origin` to `template` on first run. That
-keeps template updates available while leaving `origin` free for the user's own
-GitHub repo.
-
-On Windows, run `install-desktop.cmd` once after cloning. It creates an `AI OS`
-Desktop shortcut with its own icon; that shortcut still calls this clone's
-`AI OS.cmd`, so every launch checks the template before starting.
-
-## License
-
-MIT
+`AGENTS.md` is the provider-neutral source of truth. `CLAUDE.md` exists only so
+Claude Code can boot into the same brain.

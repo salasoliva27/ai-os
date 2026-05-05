@@ -1,123 +1,116 @@
-import { useCallback, useEffect, useState } from "react";
-import { Chat } from "./components/Chat";
-import { Credentials } from "./components/Credentials";
-import { EngineSetup } from "./components/EngineSetup";
-import { WindowShell, type PanelRegistry } from "./components/WindowShell";
-import { WindowManagerProvider, useWindowManager, buildPanelWindow } from "./store/window-store";
-import type { PanelId } from "./types/window";
-import type { Profile } from "./types";
+import { useEffect, useState } from 'react';
+import { WindowShell } from './components/WindowShell';
+import { WindowManagerProvider } from './store/window-store';
+import { TopBar } from './components/TopBar';
+import { CommandPalette } from './components/CommandPalette';
+import { PortfolioScoreboard } from './components/PortfolioScoreboard';
+import { CrossProjectFlash } from './components/CrossProjectFlash';
+import { ThemeEngine, useThemeInit } from './components/ThemeEngine';
+import { Credentials } from './components/Credentials';
+import { FirstRunOnboarding } from './components/FirstRunOnboarding';
+import { McpConfig } from './components/McpConfig';
+import { LearningToast } from './components/LearningToast';
+import { DashboardProvider, useBridgeHandler, useRegisterWsSend, useConnectionStateSync } from './store';
+import { useWebSocket } from './hooks/useWebSocket';
+import type { ServerMessage } from './types/bridge';
 
-const PANEL_LABELS: Record<PanelId, string> = {
-  chat: "Chat",
-  credentials: "Credentials",
-  files: "Files",
-  tasks: "Tasks",
-  memory: "Memory",
-  calendar: "Calendar",
-  research: "Research",
-};
+function ReloadBanner() {
+  const [stale, setStale] = useState(false);
+  useEffect(() => {
+    let initialHash = '';
+    const check = async () => {
+      try {
+        const res = await fetch('/index.html', { cache: 'no-store' });
+        const text = await res.text();
+        // Extract asset filenames as a fingerprint
+        const hash = (text.match(/assets\/index-[^"]+/g) || []).join(',');
+        if (!initialHash) { initialHash = hash; return; }
+        if (hash && hash !== initialHash) setStale(true);
+      } catch { /* ignore */ }
+    };
+    check();
+    const interval = setInterval(check, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
-export default function App() {
+  if (!stale) return null;
   return (
-    <WindowManagerProvider>
-      <Workspace />
-    </WindowManagerProvider>
+    <div className="reload-banner" onClick={() => window.location.reload()}>
+      UI updated — click to reload
+    </div>
   );
 }
 
-function Workspace() {
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [engineConfigured, setEngineConfigured] = useState<boolean | null>(null);
-  const [availableEngines, setAvailableEngines] = useState<Array<"anthropic" | "openai">>([]);
-  const { layout, dispatch } = useWindowManager();
+function DashboardInner() {
+  const { status, lastMessage, send, onMessage } = useWebSocket();
+  const handleBridgeMessage = useBridgeHandler();
+  const registerWsSend = useRegisterWsSend();
+  const { onConnectionLost, onConnectionRestored } = useConnectionStateSync();
+  const [themeOpen, setThemeOpen] = useState(false);
+  const [credentialsOpen, setCredentialsOpen] = useState(false);
+  const [credentialsInitialProvider, setCredentialsInitialProvider] = useState<string | undefined>(undefined);
+  const [mcpOpen, setMcpOpen] = useState(false);
 
+  useThemeInit();
+
+  // Route every WebSocket message synchronously into the store.
+  // Cannot rely on the `lastMessage` state value here — same-tick bursts
+  // collapse into a single render (only the last message survives).
   useEffect(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then((health) => {
-        setProfile(health.profile || null);
-        setEngineConfigured(Boolean(health.engineConfigured));
-        setAvailableEngines(Array.isArray(health.availableEngines) ? health.availableEngines : []);
-      })
-      .catch(() => {
-        setProfile(null);
-        setEngineConfigured(false);
-      });
-  }, []);
+    onMessage(handleBridgeMessage);
+  }, [onMessage, handleBridgeMessage]);
 
-  const refreshProfile = useCallback(() => {
-    fetch("/api/health")
-      .then((r) => r.json())
-      .then((health) => {
-        setProfile(health.profile || null);
-        setEngineConfigured(Boolean(health.engineConfigured));
-        setAvailableEngines(Array.isArray(health.availableEngines) ? health.availableEngines : []);
-      })
-      .catch(() => {});
-  }, []);
-
-  if (engineConfigured === null) {
-    return <div className="setup setup--loading">Loading...</div>;
-  }
-
-  if (!engineConfigured || !profile?.aiName) {
-    return (
-      <EngineSetup
-        availableEngines={availableEngines}
-        onReady={(nextProfile) => {
-          setProfile(nextProfile);
-          setEngineConfigured(true);
-          setAvailableEngines((current) =>
-            nextProfile.defaultEngine && !current.includes(nextProfile.defaultEngine)
-              ? [...current, nextProfile.defaultEngine]
-              : current
-          );
-        }}
-      />
-    );
-  }
-
-  const enabled = (profile?.enabledTools as PanelId[] | undefined) || ["credentials"];
-  const visiblePanels: PanelId[] = ["chat", ...enabled.filter((p) => p !== "chat")];
-  const brand = profile?.aiName || profile?.aiKind || "ai-os";
-
-  function openPanel(id: PanelId) {
-    const winId = `win-${id}`;
-    const existing = layout.windows.find((w) => w.id === winId);
-    if (existing) {
-      dispatch({ type: "RESTORE", id: winId });
-      dispatch({ type: "FOCUS", id: winId });
-      return;
+  // Register WebSocket send function with store when connected
+  useEffect(() => {
+    if (status === 'connected') {
+      registerWsSend(send);
     }
-    dispatch({ type: "ADD", window: buildPanelWindow(id, layout.windows.length) });
-  }
+  }, [status, send, registerWsSend]);
 
-  const panels: PanelRegistry = {
-    chat: { render: () => <Chat onProfileMaybeChanged={refreshProfile} /> },
-    credentials: { render: () => <Credentials /> },
-  };
+  // When the bridge drops mid-turn, demote stuck thinking/streaming sessions
+  // so the UI stops showing "responding" when nothing is coming back.
+  useEffect(() => {
+    if (status === 'disconnected') onConnectionLost();
+    else if (status === 'connected') onConnectionRestored();
+  }, [status, onConnectionLost, onConnectionRestored]);
+
+  // Theme shortcut: Ctrl+T
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.ctrlKey || e.metaKey) && e.key === 't') {
+        e.preventDefault();
+        setThemeOpen(v => !v);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">{brand}</div>
-        <nav className="panels">
-          {visiblePanels.map((id) => (
-            <button
-              key={id}
-              className="panel-btn"
-              onClick={() => openPanel(id)}
-              title={`Open ${PANEL_LABELS[id]}`}
-            >
-              {PANEL_LABELS[id] || id}
-            </button>
-          ))}
-        </nav>
-      </header>
-
-      <main className="main">
-        <WindowShell panels={panels} brand={brand} />
-      </main>
+    <div className="shell-outer">
+      <TopBar connectionStatus={status} onThemeToggle={() => setThemeOpen(true)} lastMessage={lastMessage} onCredentials={() => setCredentialsOpen(true)} onMcpConfig={() => setMcpOpen(true)} />
+      <div className="shell-panels">
+        <WindowManagerProvider>
+          <WindowShell />
+        </WindowManagerProvider>
+      </div>
+      <CommandPalette />
+      <PortfolioScoreboard />
+      <CrossProjectFlash />
+      {themeOpen && <ThemeEngine onClose={() => setThemeOpen(false)} />}
+      {credentialsOpen && <Credentials onClose={() => { setCredentialsOpen(false); setCredentialsInitialProvider(undefined); }} initialProviderId={credentialsInitialProvider} />}
+      {mcpOpen && <McpConfig onClose={() => setMcpOpen(false)} />}
+      <FirstRunOnboarding onOpenCredentials={(tabId) => { setCredentialsInitialProvider(tabId); setCredentialsOpen(true); }} />
+      <LearningToast />
+      <ReloadBanner />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <DashboardProvider>
+      <DashboardInner />
+    </DashboardProvider>
   );
 }
