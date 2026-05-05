@@ -1,14 +1,19 @@
 @echo off
 setlocal
 
-REM Portable Windows launcher. Double-click this from a local ai-os clone to
-REM update safely, install missing runtime pieces, start the dashboard, and
+REM Portable Windows launcher. Double-click this file from a local Janus IA
+REM clone to update, install missing runtime pieces, start the dashboard, and
 REM open http://localhost:3100.
+REM
+REM Brand-named launcher: each downstream instance (Pablo AI, JP AI, AI OS)
+REM ships its own .cmd that exports JANUS_BRAND and invokes the same `dash`
+REM script. The JANUS_BRAND env var drives log output + UI title.
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
-set "AI_OS_OPEN_BROWSER=0"
+set "JANUS_BRAND=AI OS"
+set "JANUS_OPEN_BROWSER=0"
 set "BASH="
 
 if exist "%ProgramFiles%\Git\bin\bash.exe" set "BASH=%ProgramFiles%\Git\bin\bash.exe"
@@ -31,7 +36,8 @@ if not defined BASH (
 
 if not defined BASH (
   echo Git Bash was not found.
-  echo Install Git for Windows, then run this launcher again.
+  echo Install Git for Windows, then run install-desktop.cmd again.
+  echo Do not use the Windows WSL bash launcher for %JANUS_BRAND%.
   pause
   exit /b 1
 )
@@ -45,6 +51,6 @@ popd
 
 if not "%ERR%"=="0" (
   echo.
-  echo ai-os failed to start. Review the error above.
+  echo %JANUS_BRAND% failed to start. Review the error above.
   pause
 )
