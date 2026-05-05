@@ -4,9 +4,9 @@ stage: dev
 phase: ""
 phaseProgress: 0
 summary: "Blank-slate AI workspace template. Chat-only on first boot — onboarding decides which tools and windows you get."
-lastSyncedAt: "2026-05-05T20:00:05.308Z"
-lastSyncedCommit: "8c89e7f"
-lastSyncedCommitMessage: "feat(brand): add AI OS.cmd (per-instance launcher, JANUS_BRAND=AI OS)"
+lastSyncedAt: "2026-05-05T21:06:05.886Z"
+lastSyncedCommit: "349c8dc"
+lastSyncedCommitMessage: "chore(janus): sync from janus-ia@858ad87"
 ---
 
 ## Next Steps
