@@ -63,6 +63,15 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"C:/Users/alejandro.salas/bin/nodejs/node.exe\" \"C:/Users/alejandro.salas/Documents/ASO/JanusAI/janus-ia/scripts/hook-probe.js\"",
+            "timeout": 3
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
             "command": "bash $CLAUDE_PROJECT_DIR/scripts/correction-flag-clear.sh",
             "timeout": 3
           }
