@@ -137,6 +137,25 @@ export interface GitCommit {
   hash: string;
 }
 
+export interface GitPendingItem {
+  /** porcelain v1 status code, e.g. "M", "??", "A", "D" */
+  status: string;
+  path: string;
+}
+
+export interface GitPendingCommit {
+  sha: string;
+  subject: string;
+}
+
+export interface GitPending {
+  branch: string | null;
+  upstream: string | null;
+  uncommitted: GitPendingItem[];
+  unpushed: GitPendingCommit[];
+  total: number;
+}
+
 export interface BrainNode {
   id: string;
   label: string;
@@ -230,6 +249,7 @@ export interface DashboardState {
   tools: ToolStatus[];
   memories: MemoryEntry[];
   gitCommits: GitCommit[];
+  gitPending: GitPending | null;
   brainNodes: BrainNode[];
   brainEdges: BrainEdge[];
   brainSource: BrainSource;

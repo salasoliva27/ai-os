@@ -97,7 +97,13 @@ auto_update_repo() {
   )
 }
 
-auto_update_repo "$DASH_HOME" "Janus IA"
+# Per-instance brand label for log messages. Each repo's .cmd launcher
+# exports JANUS_BRAND before invoking dash (Pablo AI / JP AI / AI OS /
+# Janus IA). Defaults to "Janus IA" so a bare `./dash` still works in
+# janus-ia without the launcher.
+JANUS_BRAND="${JANUS_BRAND:-Janus IA}"
+
+auto_update_repo "$DASH_HOME" "$JANUS_BRAND"
 if [ "$WORKSPACE_ROOT" != "$DASH_HOME" ]; then
   auto_update_repo "$WORKSPACE_ROOT" "workspace"
 fi
@@ -301,6 +307,7 @@ if command -v codex >/dev/null 2>&1 && [ -n "${OPENAI_API_KEY:-}" ]; then
   fi
 fi
 
+echo "• instance:  $JANUS_BRAND"
 echo "• workspace: $WORKSPACE_ROOT"
 echo "• starting dashboard on http://localhost:$PORT"
 echo ""
