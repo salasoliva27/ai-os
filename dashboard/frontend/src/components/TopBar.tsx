@@ -3,6 +3,7 @@ import { useDashboard } from '../store';
 import { useActiveTheme } from './ThemeEngine';
 import type { ConnectionStatus } from '../hooks/useWebSocket';
 import type { ServerMessage } from '../types/bridge';
+import type { GitPending } from '../types/dashboard';
 
 type DevStatus = 'idle' | 'updating' | 'ready' | 'error';
 
@@ -539,8 +540,118 @@ function ContextUsage() {
   );
 }
 
+function GitPendingBadge({ pending }: { pending: GitPending | null }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  if (!pending) {
+    return (
+      <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
+        loading…
+      </span>
+    );
+  }
+
+  const total = pending.total;
+  const isClean = total === 0;
+  const label = isClean ? 'clean' : `${total} pending`;
+  const titleParts = [
+    `${pending.uncommitted.length} uncommitted`,
+    `${pending.unpushed.length} unpushed`,
+    pending.branch || 'no branch',
+  ];
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        type="button"
+        onClick={() => { if (!isClean) setOpen(o => !o); }}
+        title={titleParts.join(' · ')}
+        style={{
+          background: isClean ? 'transparent' : 'var(--color-accent)',
+          color: isClean ? 'var(--color-text-muted)' : 'var(--color-text-on-accent)',
+          border: isClean ? '1px solid var(--border-color)' : 'none',
+          fontFamily: 'var(--font-family-mono)',
+          fontSize: 10,
+          padding: '2px 8px',
+          borderRadius: 4,
+          cursor: isClean ? 'default' : 'pointer',
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+        }}
+      >
+        {label}
+      </button>
+      {open && !isClean && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            background: 'var(--color-bg-elevated)',
+            border: '1px solid var(--border-color)',
+            borderRadius: 6,
+            padding: 10,
+            minWidth: 320,
+            maxWidth: 480,
+            maxHeight: 400,
+            overflowY: 'auto',
+            fontFamily: 'var(--font-family-mono)',
+            fontSize: 11,
+            zIndex: 1000,
+          }}
+        >
+          {pending.branch && (
+            <div style={{ marginBottom: 8, color: 'var(--color-text-muted)' }}>
+              branch <span style={{ color: 'var(--color-text-primary)' }}>{pending.branch}</span>
+              {pending.upstream && (
+                <> · upstream <span style={{ color: 'var(--color-text-primary)' }}>{pending.upstream}</span></>
+              )}
+            </div>
+          )}
+          {pending.uncommitted.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ color: 'var(--color-text-secondary)', marginBottom: 4, fontWeight: 600 }}>
+                uncommitted ({pending.uncommitted.length})
+              </div>
+              {pending.uncommitted.map((it, i) => (
+                <div key={`u-${i}`} style={{ display: 'flex', gap: 6, padding: '1px 0' }}>
+                  <span style={{ color: 'var(--color-accent)', minWidth: 24 }}>{it.status}</span>
+                  <span style={{ color: 'var(--color-text-primary)', wordBreak: 'break-all' }}>{it.path}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {pending.unpushed.length > 0 && (
+            <div>
+              <div style={{ color: 'var(--color-text-secondary)', marginBottom: 4, fontWeight: 600 }}>
+                unpushed ({pending.unpushed.length})
+              </div>
+              {pending.unpushed.map(c => (
+                <div key={c.sha} style={{ display: 'flex', gap: 6, padding: '1px 0' }}>
+                  <span style={{ color: 'var(--color-text-muted)', minWidth: 60 }}>{c.sha}</span>
+                  <span style={{ color: 'var(--color-text-primary)' }}>{c.subject}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TopBar({ connectionStatus, onThemeToggle, lastMessage, onCredentials, onMcpConfig }: { connectionStatus: ConnectionStatus; onThemeToggle?: () => void; lastMessage: ServerMessage | null; onCredentials?: () => void; onMcpConfig?: () => void }) {
-  const { gitCommits, agents } = useDashboard();
+  const { gitCommits, agents, gitPending } = useDashboard();
   const processing = agents.some(a => a.status === 'executing' || a.status === 'thinking');
   const theme = useActiveTheme();
 
@@ -564,9 +675,7 @@ export function TopBar({ connectionStatus, onThemeToggle, lastMessage, onCredent
           </div>
         ))}
         {repoCommits.size === 0 && (
-          <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)' }}>
-            waiting for commits...
-          </span>
+          <GitPendingBadge pending={gitPending} />
         )}
       </div>
       <ContextUsage />

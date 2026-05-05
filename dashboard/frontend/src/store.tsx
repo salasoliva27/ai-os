@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import type { DashboardState, DashboardActions, Project, ToolStatus, BrainNode, BrainEdge, Notification, Learning, CalendarSlot, FileActivity, CenterView, BrainSource, Document, AgentInfo, MemoryEntry, SessionChatState, ChatMessage, MemoryIndex } from './types/dashboard';
+import type { DashboardState, DashboardActions, Project, ToolStatus, BrainNode, BrainEdge, Notification, Learning, CalendarSlot, FileActivity, CenterView, BrainSource, Document, AgentInfo, MemoryEntry, SessionChatState, ChatMessage, MemoryIndex, GitPending } from './types/dashboard';
 import type { ServerMessage } from './types/bridge';
 
 // Projects are discovered at runtime from the user's GitHub repos via the
@@ -399,6 +399,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       tools: restoredTools,
       memories: (p?.memories as MemoryEntry[]) || [],
       gitCommits: [],
+      gitPending: null,
       brainNodes: brainData.current.nodes,
       brainEdges: brainData.current.edges,
       notifications: NOTIFICATIONS,
@@ -494,6 +495,23 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     }
     loadMemory();
     const interval = setInterval(loadMemory, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  // ── Poll /api/git/pending for the top-bar pending-changes badge ───
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPending() {
+      try {
+        const resp = await fetch('/api/git/pending');
+        if (!resp.ok) return;
+        const data = (await resp.json()) as GitPending;
+        if (cancelled) return;
+        setState(s => ({ ...s, gitPending: data }));
+      } catch { /* bridge may be restarting */ }
+    }
+    loadPending();
+    const interval = setInterval(loadPending, 15_000);
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
