@@ -23,7 +23,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { createClient } from '@supabase/supabase-js'
 
-const VAULT = '/workspaces/janus-ia'
+const VAULT = process.env.JANUS_VAULT || process.env.WORKSPACE_ROOT || '/workspaces/janus-ia'
 
 const must = k => { const v = process.env[k]; if (!v) { console.error(`Missing ${k}`); process.exit(1) } return v }
 const driver = neo4j.driver(must('NEO4J_URI'), neo4j.auth.basic(must('NEO4J_USER'), must('NEO4J_PASSWORD')))
@@ -63,8 +63,13 @@ function* walkMd(dir) {
   }
 }
 
+function relFromVault(absPath) {
+  // path.relative + normalize backslashes so this works on Windows too
+  return path.relative(VAULT, absPath).split(path.sep).join('/')
+}
+
 function labelForPath(absPath) {
-  const rel = absPath.replace(VAULT + '/', '')
+  const rel = relFromVault(absPath)
   // Check multi-segment prefixes first
   for (const [folder, label] of Object.entries(FOLDER_LABEL)) {
     if (rel.startsWith(folder + '/')) return { label, folder }
@@ -93,7 +98,7 @@ function buildFileIndex() {
       const base = path.basename(file, '.md')
       const id = slugify(base)
       const label = FOLDER_LABEL[folder]
-      const rel = file.replace(VAULT + '/', '')
+      const rel = relFromVault(file)
       index.set(id, { label, id, path: rel, name: base })
       // Also index by full rel path without extension
       const relNoExt = rel.replace(/\.md$/, '')
@@ -132,7 +137,7 @@ async function run() {
         const { label } = labelForPath(file)
         const base = path.basename(file, '.md')
         const id = slugify(base)
-        const rel = file.replace(VAULT + '/', '')
+        const rel = relFromVault(file)
         const raw = fs.readFileSync(file, 'utf8')
         const fm = matter(raw)
         const description = String((fm.content.match(/^#\s+(.+)/m)?.[1] || '')).slice(0, 200)
