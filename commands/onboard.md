@@ -98,8 +98,13 @@ Run Phase 5 (Synthesize) from `agents/core/onboarding.md`:
   surface a checklist of tokens for the user to add manually.
 - **Persist after every block.** If the chat dies mid-flow, `/onboard
   resume` must be able to pick up cleanly.
-- **Don't auto-trigger.** Onboarding only runs when the user invokes
-  `/onboard`. (First-boot detection is a v1.5 nicety, not v1.)
+- **First-boot auto-trigger.** The dashboard chat panel auto-submits
+  `/onboard` on a fresh instance when no completed onboarding YAML is
+  present at `outputs/onboarding/<instance>/`. Phase 5 step 4 (writing
+  `status: complete`) is what flips that gate off — if you skip it, the
+  user gets re-onboarded on every dashboard reload. So always write
+  `status: complete` once synthesis is done, even if the user said "skip"
+  to every file.
 
 ## Reporting
 

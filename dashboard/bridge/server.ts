@@ -173,6 +173,37 @@ export function startServer(port: number): Promise<http.Server> {
     res.json({ root: WORKSPACE_ROOT, name: WORKSPACE_NAME, memoryDir: MEMORY_DIR, memoryDirs: MEMORY_DIRS });
   });
 
+  // First-run user-onboarding gate. The chat panel checks this on mount and
+  // auto-submits `/onboard` when `completed` is false. The /onboard agent
+  // writes `completed: true` into the YAML at `outputs/onboarding/<instance>/`
+  // when the last interview block finishes.
+  app.get("/api/onboarding/user-status", (_req, res) => {
+    const dir = path.join(WORKSPACE_ROOT, "outputs", "onboarding", WORKSPACE_NAME);
+    let completed = false;
+    let yamlPath: string | null = null;
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir)
+          .filter(f => f.startsWith("intake_v") && f.endsWith(".yaml") && !f.includes(".archived."));
+        for (const f of files) {
+          const full = path.join(dir, f);
+          const text = fs.readFileSync(full, "utf-8");
+          // The /onboard agent writes `status: complete` on the last block
+          // (see commands/onboard.md, Phase 5). Tolerate `complete` and
+          // `completed` since both spellings show up in practice.
+          if (/^\s*status\s*:\s*completed?\s*$/m.test(text)) {
+            completed = true;
+            yamlPath = full;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[onboarding] status read failed:", err);
+    }
+    res.json({ completed, instance: WORKSPACE_NAME, yamlPath });
+  });
+
   // Serve frontend static files in production
   const frontendDist = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend", "dist");
   if (fs.existsSync(frontendDist)) {
