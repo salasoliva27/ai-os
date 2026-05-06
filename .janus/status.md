@@ -4,9 +4,9 @@ stage: dev
 phase: ""
 phaseProgress: 0
 summary: "Blank-slate AI workspace template. Chat-only on first boot — onboarding decides which tools and windows you get."
-lastSyncedAt: "2026-05-05T22:14:06.896Z"
-lastSyncedCommit: "b8190bf"
-lastSyncedCommitMessage: "chore(janus): sync from janus-ia@e81a2a8"
+lastSyncedAt: "2026-05-06T12:56:39.716Z"
+lastSyncedCommit: "574ce31"
+lastSyncedCommitMessage: "chore(janus): sync from janus-ia@84059ea"
 ---
 
 ## Next Steps
