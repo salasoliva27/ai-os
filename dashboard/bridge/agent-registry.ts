@@ -240,7 +240,14 @@ function isCliOnPath(cli: string): boolean {
 // Covers the case where the user set the var in ~/.bashrc / ~/.zshrc but the
 // bridge was started outside that shell (e.g. on Windows via Git Bash launcher
 // that only sources ~/.env).
+//
+// Per-instance opt-out: when JANUS_HOME_ENV=0 (set in workspace .env for
+// downstream brand instances like Pablo AI / JP AI / AI OS), this function
+// returns undefined unconditionally. Otherwise the bridge would read the
+// upstream user's ~/.env behind the dash script's back and leak their tokens
+// + discover their GitHub repos into the downstream instance.
 export function readVarFromDotfiles(name: string): string | undefined {
+  if (process.env.JANUS_HOME_ENV === "0") return undefined;
   const home = os.homedir();
   const candidates = [".env", ".bash_profile", ".profile", ".bashrc", ".zshrc"].map(f => path.join(home, f));
   const re = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*["']?([^"'\\n#]+?)["']?\\s*(?:#.*)?$`, "m");

@@ -1,5 +1,17 @@
+import { useEffect, useState } from 'react';
 import { useWindowManager } from '../store/window-store';
 import { VersionBadge } from './VersionBadge';
+
+function useBrand(): string {
+  const [brand, setBrand] = useState<string>(() => document.title || 'JANUS');
+  useEffect(() => {
+    fetch('/api/brand')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.brand) setBrand(d.brand); })
+      .catch(() => {});
+  }, []);
+  return brand.toUpperCase();
+}
 
 const TYPE_ICONS: Record<string, string> = {
   chat: '>',
@@ -12,6 +24,7 @@ const TYPE_ICONS: Record<string, string> = {
 
 export function Taskbar() {
   const { layout, dispatch } = useWindowManager();
+  const brand = useBrand();
 
   const open = layout.windows.filter(w => w.visible && !w.minimized);
   const minimized = layout.windows.filter(w => w.visible && w.minimized);
@@ -74,8 +87,8 @@ export function Taskbar() {
           </button>
         ))}
       </div>
-      <div className="wm-taskbar__janus-wordmark" aria-label="JANUS">
-        <span className="janus-wordmark__text">JANUS</span>
+      <div className="wm-taskbar__janus-wordmark" aria-label={brand}>
+        <span className="janus-wordmark__text">{brand}</span>
       </div>
       <div className="wm-taskbar__actions">
         <VersionBadge />
