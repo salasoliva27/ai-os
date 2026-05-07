@@ -160,6 +160,41 @@ export function startServer(port: number): Promise<http.Server> {
   process.once("SIGTERM", shutdownMcp);
   process.once("SIGINT", shutdownMcp);
 
+  // Public brand endpoint — registered BEFORE mountAuth so it bypasses the
+  // login gate. The login HTML and the React frontend both fetch this on boot
+  // to learn which brand label to display (Janus IA / Pablo AI / JP AI / AI OS).
+  app.get("/api/brand", (_req, res) => {
+    res.json({ brand: process.env.JANUS_BRAND || "Janus IA" });
+  });
+
+  // Discovery of sibling brand instances on the local machine. Polls a
+  // configurable port list (JANUS_SIBLING_PORTS, default 3100-3103) for
+  // /api/brand and returns the ones that responded. The Workspace tab in
+  // the bottom panel uses this to embed each sibling brand as an iframe
+  // alongside the user's project dev-server ports.
+  app.get("/api/brand-siblings", async (_req, res) => {
+    const portsRaw = process.env.JANUS_SIBLING_PORTS || "3100,3101,3102,3103";
+    const ports = portsRaw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+    const selfPort = port;
+    const probe = async (p: number): Promise<{ port: number; brand: string; self: boolean } | null> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 800);
+      try {
+        const r = await fetch(`http://127.0.0.1:${p}/api/brand`, { signal: ctrl.signal });
+        if (!r.ok) return null;
+        const d = await r.json() as { brand?: string };
+        if (!d?.brand) return null;
+        return { port: p, brand: String(d.brand), self: p === selfPort };
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const results = await Promise.all(ports.map(probe));
+    res.json({ siblings: results.filter((r): r is { port: number; brand: string; self: boolean } => r !== null) });
+  });
+
   // Auth gate (no-op when ENFORCE is false — see auth.ts). Mounted BEFORE any
   // routes so the cookie-session middleware applies to all of them, and
   // requireAuth fires before the route handlers.
@@ -171,6 +206,37 @@ export function startServer(port: number): Promise<http.Server> {
 
   app.get("/api/workspace", (_req, res) => {
     res.json({ root: WORKSPACE_ROOT, name: WORKSPACE_NAME, memoryDir: MEMORY_DIR, memoryDirs: MEMORY_DIRS });
+  });
+
+  // First-run user-onboarding gate. The chat panel checks this on mount and
+  // auto-submits `/onboard` when `completed` is false. The /onboard agent
+  // writes `completed: true` into the YAML at `outputs/onboarding/<instance>/`
+  // when the last interview block finishes.
+  app.get("/api/onboarding/user-status", (_req, res) => {
+    const dir = path.join(WORKSPACE_ROOT, "outputs", "onboarding", WORKSPACE_NAME);
+    let completed = false;
+    let yamlPath: string | null = null;
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir)
+          .filter(f => f.startsWith("intake_v") && f.endsWith(".yaml") && !f.includes(".archived."));
+        for (const f of files) {
+          const full = path.join(dir, f);
+          const text = fs.readFileSync(full, "utf-8");
+          // The /onboard agent writes `status: complete` on the last block
+          // (see commands/onboard.md, Phase 5). Tolerate `complete` and
+          // `completed` since both spellings show up in practice.
+          if (/^\s*status\s*:\s*completed?\s*$/m.test(text)) {
+            completed = true;
+            yamlPath = full;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[onboarding] status read failed:", err);
+    }
+    res.json({ completed, instance: WORKSPACE_NAME, yamlPath });
   });
 
   // Serve frontend static files in production

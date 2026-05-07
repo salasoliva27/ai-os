@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useWindowManager } from '../store/window-store';
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useDashboard } from '../store';
@@ -72,6 +72,43 @@ function renderWindowContent(win: WindowState) {
 export function WindowShell() {
   const { layout, dispatch } = useWindowManager();
   useKeyboardShortcuts();
+
+  // First-run gate: until /onboard writes `status: complete` to the YAML,
+  // hide every panel except chat. Without this gate, fresh downstream
+  // instances surface janus-ia's GitHub repos, Jira tickets, and TMC jobs
+  // (the bridge reads the user's shared env tokens, which are brand-agnostic).
+  // null = still fetching; true = show full layout; false = chat-only.
+  const [onboardingCompleted, setOnboardingCompleted] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      try {
+        const r = await fetch('/api/onboarding/user-status');
+        if (!r.ok) { if (!cancelled) setOnboardingCompleted(true); return; }
+        const d = await r.json();
+        if (!cancelled) setOnboardingCompleted(Boolean(d?.completed));
+      } catch {
+        if (!cancelled) setOnboardingCompleted(true); // fail-open — never permanently hide the dashboard
+      }
+    }
+    check();
+    return () => { cancelled = true; };
+  }, []);
+
+  // While incomplete, poll so the layout flips the moment Phase 5 writes the YAML.
+  useEffect(() => {
+    if (onboardingCompleted !== false) return;
+    const t = setInterval(async () => {
+      try {
+        const r = await fetch('/api/onboarding/user-status');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (d?.completed) setOnboardingCompleted(true);
+      } catch { /* keep polling */ }
+    }, 2000);
+    return () => clearInterval(t);
+  }, [onboardingCompleted]);
 
   // Listen for fork-chat / new-chat events from the store
   useEffect(() => {
@@ -207,6 +244,23 @@ export function WindowShell() {
       window.removeEventListener('venture-os:open-sql-console', handleOpenSqlConsole);
     };
   }, [dispatch, layout.windows]);
+
+  if (onboardingCompleted === false) {
+    // Onboarding-first layout: only the chat panel is visible. The chat
+    // panel itself auto-submits `/onboard` once an engine is selected, and
+    // the poll above flips this to `true` the moment Phase 5 finishes.
+    return (
+      <div className="wm-shell wm-shell--onboarding">
+        <div className="wm-viewport" style={{ position: 'relative' }}>
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', justifyContent: 'center' }}>
+            <div style={{ width: 'min(720px, 100%)', height: '100%' }}>
+              <ChatPanel sessionId="session-0" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="wm-shell">

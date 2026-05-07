@@ -323,10 +323,40 @@ export function ChatPanel({ sessionId = 'session-0', lineageLabel, lineageColor 
   interface PendingAttachment { name: string; size: number; type: string; path?: string; uploading: boolean; error?: string; file: File }
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [dropActive, setDropActive] = useState(false);
+  const onboardingAttempted = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  useEffect(() => {
+    // First-run user onboarding: on a fresh instance, auto-submit `/onboard`
+    // once an engine is selected. Gate is `outputs/onboarding/<instance>/`
+    // YAML carrying `completed: true` — the /onboard agent writes that on
+    // the last block. Primary session only; forks / secondary sessions stay
+    // out of the way.
+    if (sessionId !== 'session-0') return;
+    if (onboardingAttempted.current) return;
+    if (!sessionChat.agentId) return;
+    if (messages.length > 0) return;
+    if (input.trim().length > 0) return;
+    onboardingAttempted.current = true;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/onboarding/user-status');
+        if (!r.ok) return;
+        const d = await r.json();
+        if (cancelled) return;
+        if (d?.completed) return;
+        if (messages.length > 0 || input.trim().length > 0) return;
+        sendChatMessage('/onboard', sessionId);
+      } catch {
+        // bridge unreachable or auth failed — let the user start manually
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionId, sessionChat.agentId, messages.length, input, sendChatMessage]);
 
   useEffect(() => {
     const ta = inputRef.current;

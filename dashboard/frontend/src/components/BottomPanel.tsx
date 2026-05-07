@@ -242,38 +242,69 @@ function getPortUrl(port: number): string {
   return `http://localhost:${port}`;
 }
 
+interface BrandSibling { port: number; brand: string; self: boolean }
+
 function WorkspacePreview() {
   const { projects } = useDashboard();
   const [ports, setPorts] = useState<number[]>([]);
+  const [siblings, setSiblings] = useState<BrandSibling[]>([]);
   const [activePort, setActivePort] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch('/api/ports')
-      .then(r => r.json())
-      .then(d => {
-        if (d.ports?.length > 0) {
-          setPorts(d.ports);
-          if (!activePort) setActivePort(d.ports[0]);
-        }
-      })
-      .catch(() => {});
-
-    const interval = setInterval(() => {
+    const refresh = () => {
       fetch('/api/ports')
         .then(r => r.json())
         .then(d => { if (d.ports) setPorts(d.ports); })
         .catch(() => {});
-    }, 10000);
+      fetch('/api/brand-siblings')
+        .then(r => r.json())
+        .then(d => {
+          const list: BrandSibling[] = Array.isArray(d?.siblings) ? d.siblings : [];
+          setSiblings(list);
+          // Auto-select the first non-self sibling if nothing's selected yet —
+          // this is what the user wants to see in the workspace tab.
+          if (activePort === null) {
+            const firstOther = list.find(s => !s.self);
+            if (firstOther) setActivePort(firstOther.port);
+          }
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const interval = setInterval(refresh, 10000);
     return () => clearInterval(interval);
   }, []);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--border-color)', flexShrink: 0, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 4, padding: '4px 8px', borderBottom: '1px solid var(--border-color)', flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+        {/* Brand siblings (other Janus instances on this machine) */}
+        {siblings.map(s => (
+          <button
+            key={`b-${s.port}`}
+            onClick={() => setActivePort(s.port)}
+            title={s.self ? `${s.brand} (this dashboard) :${s.port}` : `${s.brand} on :${s.port}`}
+            style={{
+              background: activePort === s.port ? 'var(--color-accent)' : 'var(--color-bg-surface)',
+              color: activePort === s.port ? 'var(--color-bg-primary)' : (s.self ? 'var(--color-text-muted)' : 'var(--color-text-primary)'),
+              border: '1px solid var(--border-color)',
+              borderRadius: 4, padding: '2px 8px', fontSize: 10,
+              fontFamily: 'var(--font-family-mono)', cursor: 'pointer',
+              opacity: s.self ? 0.55 : 1,
+            }}
+          >
+            {s.brand}{s.self ? ' (self)' : ''} :{s.port}
+          </button>
+        ))}
+        {siblings.length > 0 && ports.length > 0 && (
+          <span style={{ width: 1, height: 14, background: 'var(--border-color)', margin: '0 2px' }} />
+        )}
+        {/* Project dev-server ports */}
         {ports.map(p => (
           <button
-            key={p}
+            key={`p-${p}`}
             onClick={() => setActivePort(p)}
+            title={`Dev server on :${p}`}
             style={{
               background: activePort === p ? 'var(--color-accent)' : 'var(--color-bg-surface)',
               color: activePort === p ? 'var(--color-bg-primary)' : 'var(--color-text-muted)',
@@ -285,7 +316,7 @@ function WorkspacePreview() {
             :{p}
           </button>
         ))}
-        {ports.length === 0 && (
+        {siblings.length === 0 && ports.length === 0 && (
           <span style={{ fontSize: 10, color: 'var(--color-text-muted)', fontFamily: 'var(--font-family-mono)', padding: 4 }}>
             scanning ports...
           </span>
@@ -320,7 +351,7 @@ function WorkspacePreview() {
             height: '100%', color: 'var(--color-text-muted)', fontSize: 12,
             fontFamily: 'var(--font-family-mono)',
           }}>
-            no dev servers detected
+            no sibling instances or dev servers detected
           </div>
         )}
       </div>
