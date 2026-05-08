@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
 import { useDashboard } from '../store';
 import type { BrainNode, BrainEdge } from '../types/dashboard';
 
@@ -62,7 +62,9 @@ function runForceStep(nodes: BrainNode[], edges: BrainEdge[], w: number, h: numb
 }
 
 export function ObsidianBrain() {
-  const { brainNodes, brainEdges, setCenterView, centerView, selectBrainNode, brainSource, setBrainSource } = useDashboard();
+  const {
+    brainNodes, brainEdges, setCenterView, centerView, selectBrainNode, brainSource, setBrainSource,
+  } = useDashboard();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const nodesRef = useRef<BrainNode[]>([]);
   const edgesRef = useRef<BrainEdge[]>([]);
@@ -75,6 +77,57 @@ export function ObsidianBrain() {
   const draggingRef = useRef(false);
   const dragStartRef = useRef({ x: 0, y: 0 });
   const panStartRef = useRef({ x: 0, y: 0 });
+  // Honest growth-only stats from /api/brain/stats. The previous "Growth /
+  // Activity / Freshness / Health" block computed a misleading delta against
+  // a single snapshot history that didn't track which source mode produced
+  // each score — so toggling vault↔usage gave -130 deltas even when nothing
+  // had been deleted. We now show two non-negative counts (vault entries
+  // created this week, tool calls this week) and the freshness of the most
+  // recent telemetry event. All numbers come from the bridge.
+  const [brainStats, setBrainStats] = useState<{
+    created7d: number;
+    calls7d: number;
+    lastEventAt: string | null;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const r = await fetch('/api/brain/stats');
+        if (!r.ok) return;
+        const d = await r.json() as { vault?: { created_7d?: number }; events?: { calls_7d?: number; last_at?: string | null } };
+        if (cancelled) return;
+        setBrainStats({
+          created7d: d?.vault?.created_7d ?? 0,
+          calls7d: d?.events?.calls_7d ?? 0,
+          lastEventAt: d?.events?.last_at ?? null,
+        });
+      } catch { /* keep stale */ }
+    }
+    load();
+    const t = window.setInterval(load, 60_000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, []);
+
+  const brainVitals = useMemo(() => {
+    const created = brainStats?.created7d ?? 0;
+    const calls = brainStats?.calls7d ?? 0;
+    const lastMs = brainStats?.lastEventAt ? new Date(brainStats.lastEventAt).getTime() : 0;
+    const ageMs = lastMs ? Date.now() - lastMs : null;
+    let freshness = '—';
+    if (ageMs !== null) {
+      if (ageMs < 60_000) freshness = 'now';
+      else if (ageMs < 3_600_000) freshness = `${Math.floor(ageMs / 60_000)}m ago`;
+      else if (ageMs < 86_400_000) freshness = `${Math.floor(ageMs / 3_600_000)}h ago`;
+      else freshness = `${Math.floor(ageMs / 86_400_000)}d ago`;
+    }
+    return {
+      created: `+${created}`,
+      calls: `${calls}`,
+      freshness,
+      detail: `${brainNodes.length} nodes · ${brainEdges.length} edges currently visible · vault scan covers agents, concepts, learnings, skills, modules, commands, tools`,
+    };
+  }, [brainStats, brainNodes.length, brainEdges.length]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -398,6 +451,21 @@ export function ObsidianBrain() {
         onMouseUp={handleMouseUp}
         onWheel={handleWheel}
       />
+      <div className="brain-vitals" title={brainVitals.detail}>
+        <div className="brain-vitals__title">BRAIN · 7d</div>
+        <div className="brain-vitals__row">
+          <span>Created</span>
+          <strong>{brainVitals.created}</strong>
+        </div>
+        <div className="brain-vitals__row">
+          <span>Tool calls</span>
+          <strong>{brainVitals.calls}</strong>
+        </div>
+        <div className="brain-vitals__row">
+          <span>Last activity</span>
+          <strong>{brainVitals.freshness}</strong>
+        </div>
+      </div>
       <div className="brain__source-toggle">
         <span className="brain__source-label">Brain</span>
         {(['vault', 'usage'] as const).map(s => (

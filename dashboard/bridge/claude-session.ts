@@ -9,6 +9,11 @@ import { workspaceStateSlug } from "./path-utils.js";
 import { captureSessionSummary } from "./memory-capture.js";
 
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || "/workspaces/janus-ia";
+const WORKSPACE_NAME = path.basename(WORKSPACE_ROOT);
+// Mirrors server.ts: non-janus brands point HOME at the workspace root so the
+// CLI engine reads per-brand ~/.claude.json (MCP servers, settings) and
+// credentials instead of the upstream owner's user-level config.
+const BRAND_HOME = WORKSPACE_NAME === "janus-ia" ? os.homedir() : WORKSPACE_ROOT;
 const ENGINE_PROJECT_DIR = workspaceStateSlug(WORKSPACE_ROOT);
 const JANUS_STATE_DIR = path.join(os.homedir(), ".janus", "projects", ENGINE_PROJECT_DIR);
 const LEGACY_CLAUDE_STATE_DIR = path.join(os.homedir(), ".claude", "projects", ENGINE_PROJECT_DIR);
@@ -351,6 +356,10 @@ export class ClaudeSession {
     const childEnv: NodeJS.ProcessEnv = { ...process.env };
     for (const key of spawnSpec.envUnset || []) { delete childEnv[key]; }
     if (spawnSpec.envPatch) { Object.assign(childEnv, spawnSpec.envPatch); }
+    if (WORKSPACE_NAME !== "janus-ia") {
+      childEnv.HOME = BRAND_HOME;
+      childEnv.USERPROFILE = BRAND_HOME;
+    }
 
     // Pre-flight: missing-credential guard for adapters that strictly need an
     // env key. Codex can also use `codex login`, so env absence is not fatal.

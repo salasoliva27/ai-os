@@ -8,15 +8,16 @@ type Version = {
   editedAt?: string | null;
 };
 
-function relativeTime(iso: string | null): string {
+function formatDateHour(iso: string | null): string {
   if (!iso) return '';
-  const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - t) / 1000));
-  if (diffSec < 60) return 'just now';
-  if (diffSec < 3600) return `${Math.round(diffSec / 60)}m ago`;
-  if (diffSec < 86400) return `${Math.round(diffSec / 3600)}h ago`;
-  return `${Math.round(diffSec / 86400)}d ago`;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 async function fetchVersion(): Promise<Version | null> {
@@ -56,13 +57,9 @@ export function VersionBadge() {
   if (!loaded || !loaded.commit) return null;
 
   const stale = !!(current && current.commit && current.commit !== loaded.commit);
-  const live = current ?? loaded;
-  // Prefer most recent uncommitted edit; otherwise fall back to last pull/commit.
-  const reference = live.editedAt || live.pulledAt || live.commitTime;
-  const editedSuffix = live.editedAt ? ' · edited' : '';
+  const createdAt = formatDateHour(loaded.commitTime || loaded.pulledAt);
   const tooltip = [
     `commit ${loaded.commit}`,
-    live.editedAt ? `working tree edited ${live.editedAt}` : '',
     loaded.commitTime ? `committed ${loaded.commitTime}` : '',
     loaded.pulledAt ? `pulled ${loaded.pulledAt}` : '',
     stale && current?.commit ? `\nupdate available: ${current.commit} — click Reload` : '',
@@ -74,7 +71,7 @@ export function VersionBadge() {
     <>
       <span className="wm-taskbar__version" title={tooltip}>
         {loaded.commit}
-        {reference ? ` · ${relativeTime(reference)}${editedSuffix}` : ''}
+        {createdAt ? ` - ${createdAt}` : ''}
       </span>
       {stale && (
         <button

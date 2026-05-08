@@ -238,6 +238,8 @@ export interface Document {
   timestamp: number;
   /** Bytes — only meaningful for uploaded binary docs */
   size?: number;
+  /** Browser-readable URL for files served by the dashboard bridge. */
+  url?: string;
   /** Drive view URL once the async Drive mirror completes */
   driveUrl?: string;
 }
@@ -288,6 +290,7 @@ export interface DashboardState {
   rightPanelTab: 'memory' | 'documents' | 'uploaded' | 'editor';
   agentCounts: Record<string, number>;
   projectCounts: Record<string, number>;
+  conversationHistory: ConversationRecord[];
   /** Auto-memory index loaded from /api/memory/index */
   memoryIndex: MemoryIndex | null;
 }
@@ -297,6 +300,8 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'memory';
   content: string;
   timestamp: number;
+  /** Files/images attached to this visible chat message. */
+  attachments?: Document[];
   /** For memory messages: which memory file / operation this refers to */
   memoryRef?: string;
   /** For memory messages: direction of the operation */
@@ -317,6 +322,19 @@ export interface MemoryIndex {
   indexContent: string;
   dir: string;
   fetchedAt: number;
+}
+
+export interface ConversationRecord {
+  id: string;
+  sessionId: string;
+  title: string;
+  rootLabel?: string;
+  createdAt: number;
+  updatedAt: number;
+  endedAt?: number;
+  reason: 'active' | 'new_chat' | 'restart' | 'fork' | 'ui_restart' | 'snapshot';
+  messages: ChatMessage[];
+  preview: string;
 }
 
 /** Per-session chat state — each fork gets its own message list + status */
@@ -347,7 +365,7 @@ export interface DashboardActions {
   setBrainSource: (source: BrainSource) => void;
   toggleCommandPalette: () => void;
   toggleScoreboard: () => void;
-  sendChatMessage: (msg: string, sessionId?: string) => void;
+  sendChatMessage: (msg: string, sessionId?: string, attachments?: Document[], opts?: { hidden?: boolean }) => boolean;
   stopResponse: (sessionId?: string) => void;
   editMessage: (messageId: string, sessionId?: string) => string | null;
   getSessionChat: (sessionId: string) => SessionChatState;

@@ -15,7 +15,7 @@ export interface WindowLineage {
 export interface WindowState {
   id: string;
   title: string;
-  type: 'chat' | 'center' | 'bottom' | 'right' | 'calendar' | 'sql-console' | 'tickets';
+  type: 'chat' | 'center' | 'bottom' | 'right' | 'calendar' | 'sql-console' | 'tickets' | 'chat-history';
   x: number;
   y: number;
   width: number;

@@ -136,7 +136,7 @@ function DocContent({ doc }: { doc: Document }) {
     case 'image':
       return (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-          <img src={doc.content.startsWith('data:') ? doc.content : doc.path} alt={doc.filename} style={{ maxWidth: '100%', maxHeight: '100%' }} />
+          <img src={doc.content.startsWith('data:') ? doc.content : doc.url || doc.path} alt={doc.filename} style={{ maxWidth: '100%', maxHeight: '100%' }} />
         </div>
       );
     case 'binary':
