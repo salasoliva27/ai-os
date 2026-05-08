@@ -160,6 +160,41 @@ export function startServer(port: number): Promise<http.Server> {
   process.once("SIGTERM", shutdownMcp);
   process.once("SIGINT", shutdownMcp);
 
+  // Public brand endpoint — registered BEFORE mountAuth so it bypasses the
+  // login gate. The login HTML and the React frontend both fetch this on boot
+  // to learn which brand label to display (Janus IA / Pablo AI / JP AI / AI OS).
+  app.get("/api/brand", (_req, res) => {
+    res.json({ brand: process.env.JANUS_BRAND || "Janus IA" });
+  });
+
+  // Discovery of sibling brand instances on the local machine. Polls a
+  // configurable port list (JANUS_SIBLING_PORTS, default 3100-3103) for
+  // /api/brand and returns the ones that responded. The Workspace tab in
+  // the bottom panel uses this to embed each sibling brand as an iframe
+  // alongside the user's project dev-server ports.
+  app.get("/api/brand-siblings", async (_req, res) => {
+    const portsRaw = process.env.JANUS_SIBLING_PORTS || "3100,3101,3102,3103";
+    const ports = portsRaw.split(",").map(s => parseInt(s.trim(), 10)).filter(n => Number.isInteger(n) && n > 0);
+    const selfPort = port;
+    const probe = async (p: number): Promise<{ port: number; brand: string; self: boolean } | null> => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 800);
+      try {
+        const r = await fetch(`http://127.0.0.1:${p}/api/brand`, { signal: ctrl.signal });
+        if (!r.ok) return null;
+        const d = await r.json() as { brand?: string };
+        if (!d?.brand) return null;
+        return { port: p, brand: String(d.brand), self: p === selfPort };
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const results = await Promise.all(ports.map(probe));
+    res.json({ siblings: results.filter((r): r is { port: number; brand: string; self: boolean } => r !== null) });
+  });
+
   // Auth gate (no-op when ENFORCE is false — see auth.ts). Mounted BEFORE any
   // routes so the cookie-session middleware applies to all of them, and
   // requireAuth fires before the route handlers.
@@ -171,6 +206,45 @@ export function startServer(port: number): Promise<http.Server> {
 
   app.get("/api/workspace", (_req, res) => {
     res.json({ root: WORKSPACE_ROOT, name: WORKSPACE_NAME, memoryDir: MEMORY_DIR, memoryDirs: MEMORY_DIRS });
+  });
+
+  // First-run user-onboarding gate. The chat panel + WindowShell check this
+  // on mount; when `completed` is false, only the chat is shown and `/onboard`
+  // auto-submits. The /onboard agent writes `status: complete` into the YAML
+  // at `outputs/onboarding/<instance>/` when the last interview block finishes.
+  //
+  // The upstream authoring instance (janus-ia) is permanently exempt — its
+  // owner is the one BUILDING the onboarding flow, not running through it.
+  // Only fresh downstream brands (pablo-ia, jp-ai, ai-os, …) should ever see
+  // the chat-only first-run layout.
+  app.get("/api/onboarding/user-status", (_req, res) => {
+    if (WORKSPACE_NAME === "janus-ia") {
+      return res.json({ completed: true, instance: WORKSPACE_NAME, yamlPath: null, exempt: true });
+    }
+    const dir = path.join(WORKSPACE_ROOT, "outputs", "onboarding", WORKSPACE_NAME);
+    let completed = false;
+    let yamlPath: string | null = null;
+    try {
+      if (fs.existsSync(dir)) {
+        const files = fs.readdirSync(dir)
+          .filter(f => f.startsWith("intake_v") && f.endsWith(".yaml") && !f.includes(".archived."));
+        for (const f of files) {
+          const full = path.join(dir, f);
+          const text = fs.readFileSync(full, "utf-8");
+          // The /onboard agent writes `status: complete` on the last block
+          // (see commands/onboard.md, Phase 5). Tolerate `complete` and
+          // `completed` since both spellings show up in practice.
+          if (/^\s*status\s*:\s*completed?\s*$/m.test(text)) {
+            completed = true;
+            yamlPath = full;
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[onboarding] status read failed:", err);
+    }
+    res.json({ completed, instance: WORKSPACE_NAME, yamlPath });
   });
 
   // Serve frontend static files in production
@@ -463,6 +537,185 @@ export function startServer(port: number): Promise<http.Server> {
     }
   });
 
+  // Honest growth signals for the Brain panel: only positive deltas, never
+  // a misleading "your brain shrank" delta. Two numbers + one timestamp:
+  //   - vault.created_7d  — vault entries (markdown under agents/, concepts/,
+  //                          learnings/, skills/, modules/, commands/, tools/)
+  //                          whose mtime is within the last 7 days.
+  //   - events.calls_7d   — count of Supabase brain_events rows for this
+  //                          workspace in the last 7 days (i.e., MCP tool
+  //                          calls that the bridge has logged).
+  //   - events.last_at    — most recent brain_event timestamp.
+  app.get("/api/brain/stats", async (_req, res) => {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const VAULT_DIRS = ["agents", "concepts", "learnings", "skills", "modules", "commands", "tools"];
+    let createdVault = 0;
+    for (const rel of VAULT_DIRS) {
+      const dir = path.join(WORKSPACE_ROOT, rel);
+      if (!fs.existsSync(dir)) continue;
+      const stack: string[] = [dir];
+      while (stack.length > 0) {
+        const cur = stack.pop()!;
+        let entries: fs.Dirent[];
+        try { entries = fs.readdirSync(cur, { withFileTypes: true }); } catch { continue; }
+        for (const e of entries) {
+          const full = path.join(cur, e.name);
+          if (e.isDirectory()) { stack.push(full); continue; }
+          if (!e.isFile() || !e.name.endsWith(".md")) continue;
+          try {
+            const st = fs.statSync(full);
+            if (st.mtimeMs >= cutoff) createdVault++;
+          } catch { /* ignore */ }
+        }
+      }
+    }
+
+    let calls7d = 0;
+    let lastEventAt: string | null = null;
+    const supaUrl = process.env.SUPABASE_URL;
+    const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (supaUrl && supaKey) {
+      try {
+        const since = new Date(cutoff).toISOString();
+        const ws = encodeURIComponent(WORKSPACE_NAME);
+        const headers = { apikey: supaKey, Authorization: `Bearer ${supaKey}`, Prefer: "count=exact" } as Record<string, string>;
+        const r = await fetch(
+          `${supaUrl.replace(/\/+$/, "")}/rest/v1/brain_events?select=created_at&workspace=eq.${ws}&created_at=gte.${encodeURIComponent(since)}&order=created_at.desc&limit=1`,
+          { headers },
+        );
+        if (r.ok) {
+          // Supabase returns the count in Content-Range like "0-0/47"
+          const cr = r.headers.get("content-range") || "";
+          const m = cr.match(/\/(\d+)$/);
+          if (m) calls7d = parseInt(m[1], 10) || 0;
+          const rows = (await r.json().catch(() => [])) as Array<{ created_at?: string }>;
+          if (rows.length > 0 && rows[0].created_at) lastEventAt = rows[0].created_at;
+        }
+      } catch (err) {
+        console.warn("[brain/stats] Supabase query failed:", err);
+      }
+    }
+
+    res.json({
+      workspace: WORKSPACE_NAME,
+      vault: { created_7d: createdVault },
+      events: { calls_7d: calls7d, last_at: lastEventAt },
+      generated_at: new Date().toISOString(),
+    });
+  });
+
+  // ── Chat conversation archive (Supabase write-through) ──────────────
+  // The frontend keeps localStorage as the local cache for the active
+  // session; every archive trigger (new chat, restart, fork, ui_restart)
+  // POSTs the resulting ConversationRecord here, and we upsert it to the
+  // chat_conversations table. On UI mount the dashboard fetches the recent
+  // rows back and merges them into history. Failure mode is graceful:
+  // missing creds → 503 and the frontend falls back to local-only.
+  type ConversationRecordPayload = {
+    id: string;
+    sessionId: string;
+    title: string;
+    reason: string;
+    rootLabel?: string | null;
+    preview?: string | null;
+    messages: Array<unknown>;
+    createdAt: number;
+    updatedAt: number;
+    endedAt?: number | null;
+  };
+
+  function supabaseEnv(): { url: string; key: string } | null {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) return null;
+    return { url: url.replace(/\/+$/, ""), key };
+  }
+
+  app.post("/api/chat/archive", async (req, res) => {
+    const env = supabaseEnv();
+    if (!env) return res.status(503).json({ error: "supabase not configured" });
+    const raw = req.body as { records?: ConversationRecordPayload[] } | ConversationRecordPayload;
+    const list: ConversationRecordPayload[] = Array.isArray((raw as { records?: ConversationRecordPayload[] }).records)
+      ? (raw as { records: ConversationRecordPayload[] }).records
+      : [(raw as ConversationRecordPayload)];
+    const rows = list.filter(r => r && r.id && r.sessionId).map(r => ({
+      id: r.id,
+      workspace: WORKSPACE_NAME,
+      session_id: r.sessionId,
+      title: r.title || "Untitled chat",
+      reason: r.reason || "active",
+      root_label: r.rootLabel ?? null,
+      preview: r.preview ?? null,
+      messages: r.messages ?? [],
+      created_at: new Date(r.createdAt || Date.now()).toISOString(),
+      updated_at: new Date(r.updatedAt || Date.now()).toISOString(),
+      ended_at: r.endedAt ? new Date(r.endedAt).toISOString() : null,
+    }));
+    if (rows.length === 0) return res.json({ ok: true, written: 0 });
+    try {
+      const r = await fetch(`${env.url}/rest/v1/chat_conversations?on_conflict=id`, {
+        method: "POST",
+        headers: {
+          apikey: env.key,
+          Authorization: `Bearer ${env.key}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        },
+        body: JSON.stringify(rows),
+      });
+      if (!r.ok) {
+        const body = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Supabase write failed: ${body.slice(0, 200)}` });
+      }
+      return res.json({ ok: true, written: rows.length });
+    } catch (err) {
+      return res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get("/api/chat/history", async (req, res) => {
+    const env = supabaseEnv();
+    if (!env) return res.json({ records: [], supabase: false });
+    const limit = Math.min(parseInt(String(req.query.limit ?? "250"), 10) || 250, 500);
+    const ws = encodeURIComponent(WORKSPACE_NAME);
+    try {
+      const r = await fetch(
+        `${env.url}/rest/v1/chat_conversations?select=*&workspace=eq.${ws}&order=updated_at.desc&limit=${limit}`,
+        { headers: { apikey: env.key, Authorization: `Bearer ${env.key}` } },
+      );
+      if (!r.ok) {
+        const body = await r.text().catch(() => "");
+        return res.status(r.status).json({ error: `Supabase read failed: ${body.slice(0, 200)}` });
+      }
+      const rows = (await r.json()) as Array<{
+        id: string; workspace: string; session_id: string; title: string; reason: string;
+        root_label: string | null; preview: string | null; messages: unknown[];
+        created_at: string; updated_at: string; ended_at: string | null;
+      }>;
+      const records = rows.map(row => ({
+        id: row.id,
+        sessionId: row.session_id,
+        title: row.title,
+        reason: row.reason,
+        rootLabel: row.root_label ?? undefined,
+        preview: row.preview ?? "",
+        messages: row.messages,
+        createdAt: new Date(row.created_at).getTime(),
+        updatedAt: new Date(row.updated_at).getTime(),
+        endedAt: row.ended_at ? new Date(row.ended_at).getTime() : undefined,
+      }));
+      return res.json({ records, supabase: true });
+    } catch (err) {
+      return res.status(500).json({ error: String(err), records: [] });
+    }
+  });
+
+  // Server-side search left for a v2 — for now the History panel does
+  // in-memory matching over what /api/chat/history returned (up to 500 rows
+  // per workspace, which fits comfortably under a few hundred kB of state).
+  // The FTS index on chat_conversations is in place; flip the panel to use
+  // it once the row count makes client-side search noticeable.
+
   // Usage brain — graph built from brain_events (MCP tool calls)
   app.get("/api/brain/events", async (_req, res) => {
     try {
@@ -498,15 +751,28 @@ export function startServer(port: number): Promise<http.Server> {
   let claudeLoginChild: LoginChild | null = null;
   let claudeLoginUrl: string | null = null;
 
+  // Per-brand credential isolation. Claude CLI writes to ~/.claude/ which
+  // is shared across every brand on the same machine -- without this, a
+  // subscription login on Pablo AI would overwrite Alejandro's Max
+  // subscription on janus-ia, and downstream auth status would always
+  // mirror the upstream owner's account. Redirecting HOME (and USERPROFILE
+  // on Windows) for the CLI subprocess + reading credentials from the
+  // per-brand path keeps each brand's auth state separate.
+  const BRAND_HOME = WORKSPACE_NAME === "janus-ia" ? os.homedir() : WORKSPACE_ROOT;
+
   function claudeCleanEnv(): NodeJS.ProcessEnv {
     const cleanEnv = { ...process.env };
     delete cleanEnv.ANTHROPIC_API_KEY;
+    if (WORKSPACE_NAME !== "janus-ia") {
+      cleanEnv.HOME = BRAND_HOME;
+      cleanEnv.USERPROFILE = BRAND_HOME;
+    }
     return cleanEnv;
   }
 
   function readClaudeCredentialMeta(): { expiresAt?: number; accessTokenExpired?: boolean } {
     try {
-      const file = path.join(os.homedir(), ".claude", ".credentials.json");
+      const file = path.join(BRAND_HOME, ".claude", ".credentials.json");
       const parsed = JSON.parse(fs.readFileSync(file, "utf-8"));
       const expiresAt = Number(parsed?.claudeAiOauth?.expiresAt);
       if (!Number.isFinite(expiresAt)) return {};
@@ -584,6 +850,12 @@ export function startServer(port: number): Promise<http.Server> {
   }
 
   app.get("/api/claude-auth/status", async (_req, res) => {
+    // Brand isolation now happens at the credential-storage layer:
+    // claudeCleanEnv() redirects HOME/USERPROFILE to BRAND_HOME for the
+    // CLI subprocess on non-janus-ia brands, and readClaudeCredentialMeta
+    // reads from the brand-specific path. So this endpoint genuinely
+    // reflects per-brand auth state — Pablo's subscription login on
+    // pablo-ia won't show up on janus-ia and vice versa.
     try {
       res.json(await getClaudeAuthStatus());
     } catch (err) {
@@ -745,12 +1017,22 @@ export function startServer(port: number): Promise<http.Server> {
   let codexLoginUrl: string | null = null;
 
   app.get("/api/codex-auth/status", async (_req, res) => {
+    // Brand isolation: HOME/USERPROFILE are redirected to BRAND_HOME for
+    // the codex CLI subprocess via codexCleanEnv (which reuses the same
+    // claudeCleanEnv pattern). `codex login status` reads ~/.codex/auth.json
+    // — with HOME redirected, that resolves to <brand-home>/.codex/auth.json
+    // and stays separate from the upstream owner's login.
     try {
       const { execFile } = await import("node:child_process");
       // `codex login status` returns plain text: "Logged in" or "Not logged in".
       // OPENAI_API_KEY in env doesn't override OAuth the way Claude's does, but
       // we still report envKeySet so the UI can call out the fallback path.
-      execFile("codex", ["login", "status"], { timeout: 5_000, shell: process.platform === "win32" }, (err, stdout, stderr) => {
+      // BRAND_HOME redirect so `codex login status` reads from the brand-
+      // specific ~/.codex/auth.json instead of the shared upstream one.
+      const codexEnv: NodeJS.ProcessEnv = WORKSPACE_NAME === "janus-ia"
+        ? process.env
+        : { ...process.env, HOME: BRAND_HOME, USERPROFILE: BRAND_HOME };
+      execFile("codex", ["login", "status"], { env: codexEnv, timeout: 5_000, shell: process.platform === "win32" }, (err, stdout, stderr) => {
         if (err && !stdout) {
           res.json({ loggedIn: false, error: String(err.message ?? err), envKeySet: !!(process.env.OPENAI_API_KEY || readVarFromDotfiles("OPENAI_API_KEY")) });
           return;
@@ -791,6 +1073,12 @@ export function startServer(port: number): Promise<http.Server> {
       // doesn't short-circuit to API-key mode when one is present in env.
       const cleanEnv: NodeJS.ProcessEnv = { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" };
       delete cleanEnv.OPENAI_API_KEY;
+      // BRAND_HOME redirect: write the codex token to <brand-home>/.codex/
+      // so Pablo AI's login doesn't overwrite Alejandro's on janus-ia.
+      if (WORKSPACE_NAME !== "janus-ia") {
+        cleanEnv.HOME = BRAND_HOME;
+        cleanEnv.USERPROFILE = BRAND_HOME;
+      }
       const child = spawn("codex", ["login"], {
         env: cleanEnv,
         stdio: ["ignore", "pipe", "pipe"],
@@ -849,7 +1137,12 @@ export function startServer(port: number): Promise<http.Server> {
         codexLoginUrl = null;
       }
       const { execFile } = await import("node:child_process");
-      execFile("codex", ["logout"], { timeout: 5_000, shell: process.platform === "win32" }, (err, stdout, stderr) => {
+      // BRAND_HOME redirect so logout deletes the brand-specific token,
+      // not the upstream owner's.
+      const codexLogoutEnv: NodeJS.ProcessEnv = WORKSPACE_NAME === "janus-ia"
+        ? process.env
+        : { ...process.env, HOME: BRAND_HOME, USERPROFILE: BRAND_HOME };
+      execFile("codex", ["logout"], { env: codexLogoutEnv, timeout: 5_000, shell: process.platform === "win32" }, (err, stdout, stderr) => {
         if (err) {
           res.status(500).json({ ok: false, error: String(err.message ?? err), stderr: String(stderr).slice(0, 300) });
           return;
@@ -2054,10 +2347,21 @@ export function startServer(port: number): Promise<http.Server> {
           if (code !== 0) console.error(`[gdrive-save] exit ${code} for ${filename}:`, stderr.trim());
         });
       }
-      res.json({ ok: true, path: full, filename, size: buf.length, type: type || "" });
+      res.json({ ok: true, path: full, filename, size: buf.length, type: type || "", url: `/api/chat/uploads/${encodeURIComponent(filename)}` });
     } catch (err) {
       res.status(500).json({ ok: false, error: String(err) });
     }
+  });
+
+  app.get("/api/chat/uploads/:filename", (req, res) => {
+    const filename = safeFileName(req.params.filename || "");
+    const full = path.resolve(UPLOADS_DIR, filename);
+    const uploadsRoot = path.resolve(UPLOADS_DIR);
+    if (!full.startsWith(uploadsRoot) || !fs.existsSync(full)) {
+      res.status(404).send("Not found");
+      return;
+    }
+    res.sendFile(full);
   });
 
   // Custom theme extraction — runs `claude -p` with a locked JSON-response prompt

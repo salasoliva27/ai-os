@@ -327,29 +327,44 @@
 .wm-taskbar__reset {
   font-family: var(--font-family-mono, monospace);
   font-size: 10px;
-  padding: 2px 8px;
+  letter-spacing: 0.04em;
+  padding: 2px 9px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--border-color, oklch(0.35 0.02 240));
   border-radius: 4px;
   background: transparent;
   color: var(--color-text-muted, oklch(0.65 0.02 240));
   cursor: pointer;
+  transition: color 0.1s, border-color 0.1s;
 }
 
 .wm-taskbar__reset:hover {
   color: var(--color-accent, oklch(0.78 0.16 180));
+  border-color: color-mix(in oklch, var(--color-accent, oklch(0.78 0.16 180)) 50%, var(--border-color, oklch(0.35 0.02 240)));
 }
 
+/* Accent-tinted action buttons — same visual weight as the existing
+   "+ new chat" button so the toolbar reads as a consistent set. */
+.wm-taskbar__history,
 .wm-taskbar__new-chat {
   font-family: var(--font-family-mono, monospace);
   font-size: 10px;
-  padding: 2px 8px;
+  letter-spacing: 0.04em;
+  padding: 2px 9px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--color-accent, oklch(0.78 0.16 180));
   border-radius: 4px;
   background: transparent;
   color: var(--color-accent, oklch(0.78 0.16 180));
   cursor: pointer;
+  transition: background 0.1s, color 0.1s;
 }
 
+.wm-taskbar__history:hover,
 .wm-taskbar__new-chat:hover {
   background: color-mix(in oklch, var(--color-accent, oklch(0.78 0.16 180)) 14%, transparent);
 }

@@ -86,6 +86,12 @@ export function FirstRunOnboarding({ onOpenCredentials }: { onOpenCredentials: (
   const [pending, setPending] = useState<Record<string, 'idle' | 'starting' | 'awaiting' | 'error'>>({});
   const [authUrls, setAuthUrls] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
+  // Brand name (e.g. "Pablo AI") shown in the welcome title on downstream
+  // brand instances so the modal feels per-brand instead of generic Janus.
+  const [brandLabel, setBrandLabel] = useState<string | null>(null);
+  // Whether this is a non-janus-ia instance — picks the corner-card render
+  // (non-blocking) over the full-screen modal so the dashboard is visible.
+  const [isDownstream, setIsDownstream] = useState(false);
 
   const checkReadiness = async () => {
     if (localStorage.getItem(DEFER_KEY) === '1') {
@@ -93,9 +99,26 @@ export function FirstRunOnboarding({ onOpenCredentials }: { onOpenCredentials: (
       return;
     }
     try {
+      // Downstream brands (Pablo AI, JP AI, AI OS, …) show the welcome on
+      // first visit even when shared Claude OAuth is already active — those
+      // instances are a different account engine for the same brain, so the
+      // user should dismiss the welcome intentionally rather than skipping
+      // straight in. Upstream (janus-ia) keeps the original auto-hide.
+      const [wsResp, brandResp] = await Promise.all([
+        fetch('/api/workspace').then(r => r.ok ? r.json() : null).catch(() => null),
+        fetch('/api/brand').then(r => r.ok ? r.json() : null).catch(() => null),
+      ]);
+      const isDownstreamBrand = !!(wsResp && wsResp.name && wsResp.name !== 'janus-ia');
+      setIsDownstream(isDownstreamBrand);
+      setBrandLabel(brandResp?.brand || (wsResp?.name ?? null));
+
       const { envKeys, claudeLoggedIn, codexLoggedIn } = await fetchProviderReadiness();
       const anyReady = claudeLoggedIn || codexLoggedIn || Object.values(envKeys).some(Boolean);
-      setShow(!anyReady);
+      if (isDownstreamBrand) {
+        setShow(true);
+      } else {
+        setShow(!anyReady);
+      }
     } catch {
       // Bridge not reachable — don't block the UI with onboarding when we
       // can't even tell what's configured. Reappears on next page load.
@@ -145,10 +168,64 @@ export function FirstRunOnboarding({ onOpenCredentials }: { onOpenCredentials: (
 
   if (show !== true) return null;
 
+  // Downstream brand: small dismissible welcome card in the corner — does NOT
+  // cover the dashboard. The shared Claude OAuth is already wired, so this is
+  // a "you've arrived" hello, not a blocking setup gate.
+  if (isDownstream) {
+    return (
+      <div
+        role="dialog"
+        aria-label={`${brandLabel || 'Brand'} welcome`}
+        style={{
+          position: 'fixed',
+          top: 56,
+          right: 16,
+          width: 320,
+          padding: '14px 16px',
+          background: 'var(--color-bg-elevated, #1f2125)',
+          border: '1px solid var(--color-border, #333)',
+          borderRadius: 10,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+          fontFamily: 'var(--font-family, system-ui)',
+          fontSize: 13,
+          color: 'var(--color-text-primary, #eaeaea)',
+          zIndex: 9000,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
+          <strong style={{ fontSize: 14 }}>Welcome to {brandLabel || 'this instance'}</strong>
+          <button
+            onClick={deferSetup}
+            aria-label="dismiss welcome"
+            style={{
+              background: 'transparent', border: 'none', color: 'var(--color-text-muted, #888)',
+              cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0,
+            }}
+          >×</button>
+        </div>
+        <p style={{ margin: '0 0 10px', color: 'var(--color-text-muted, #aaa)', lineHeight: 1.4 }}>
+          A separate account engine sharing the same brain. The Claude session is already active —
+          you can start using the dashboard right away.
+        </p>
+        <button
+          onClick={deferSetup}
+          style={{
+            background: 'var(--color-accent, #4a90e2)',
+            color: 'var(--color-text-on-accent, #fff)',
+            border: 'none', borderRadius: 6, padding: '6px 12px',
+            cursor: 'pointer', fontSize: 12, fontWeight: 600,
+          }}
+        >Got it</button>
+      </div>
+    );
+  }
+
   return (
     <div className="onboarding__backdrop" role="dialog" aria-modal="true">
       <div className="onboarding__modal">
-        <h2 className="onboarding__title">Welcome — pick an engine for the brain</h2>
+        <h2 className="onboarding__title">
+          {brandLabel ? `Welcome to ${brandLabel} — pick an engine for the brain` : 'Welcome — pick an engine for the brain'}
+        </h2>
         <p className="onboarding__subtitle">
           No provider is configured yet. Sign in with a subscription or paste an API key for any of the
           options below. You can add more providers later from the credentials panel.

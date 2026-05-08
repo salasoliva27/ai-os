@@ -16,6 +16,7 @@ import { RightPanel } from './RightPanel';
 import { ToolPulseBar } from './ToolPulseBar';
 import { BottomPanel } from './BottomPanel';
 import { SQLConsole } from './SQLConsole';
+import { ChatHistoryPanel } from './ChatHistoryPanel';
 import { rootColor } from '../types/window';
 import type { WindowState } from '../types/window';
 
@@ -41,14 +42,9 @@ function BottomContent() {
 function renderWindowContent(win: WindowState) {
   switch (win.type) {
     case 'chat': {
-      const label = win.lineage
-        ? `L${win.lineage.depth} · ${win.lineage.breadcrumb.join(' > ')}`
-        : undefined;
       return (
         <ChatPanel
           sessionId={win.sessionId || 'session-0'}
-          lineageLabel={label}
-          lineageColor={win.lineage?.color}
         />
       );
     }
@@ -64,6 +60,8 @@ function renderWindowContent(win: WindowState) {
       return <TicketsPanel />;
     case 'sql-console':
       return <SQLConsole tool={win.consoleTool || 'supabase'} />;
+    case 'chat-history':
+      return <ChatHistoryPanel />;
     default:
       return <div style={{ padding: 16, color: 'var(--color-text-muted)' }}>Window: {win.type}</div>;
   }
@@ -72,6 +70,16 @@ function renderWindowContent(win: WindowState) {
 export function WindowShell() {
   const { layout, dispatch } = useWindowManager();
   useKeyboardShortcuts();
+
+  // The first-run chat-only gate was removed: the user wants the full
+  // dashboard visible from the start with empty panels (Projects empty,
+  // Brain awaiting account setup, Context blank, Activity showing only
+  // the brand-agnostic timeline/calendar/learnings/terminal). The
+  // /onboard auto-trigger still fires inside ChatPanel — Pablo / JP / new
+  // user just sees the full layout while the onboarding interview runs
+  // in the chat panel beside them. Brand isolation is now enforced at
+  // the bridge env-strip layer (see bin/venture-os.ts) rather than by
+  // hiding the UI.
 
   // Listen for fork-chat / new-chat events from the store
   useEffect(() => {
@@ -201,10 +209,45 @@ export function WindowShell() {
     }
     window.addEventListener('venture-os:open-sql-console', handleOpenSqlConsole);
 
+    function handleOpenChatHistory() {
+      const winId = 'win-chat-history';
+      const existing = layout.windows.find(w => w.id === winId);
+      if (existing) {
+        dispatch({ type: 'RESTORE', id: winId });
+        dispatch({ type: 'FOCUS', id: winId });
+        return;
+      }
+
+      const vw = window.innerWidth;
+      const vh = window.innerHeight - 40 - 34;
+      const w = Math.round(vw * 0.48);
+      const h = Math.round(vh * 0.68);
+
+      const newWin: WindowState = {
+        id: winId,
+        title: 'Chat History',
+        type: 'chat-history',
+        x: Math.max(16, Math.round(vw - w - 28)),
+        y: Math.max(16, Math.round(vh - h - 28)),
+        width: w,
+        height: h,
+        minWidth: 480,
+        minHeight: 320,
+        zIndex: 0,
+        minimized: false,
+        maximized: false,
+        visible: true,
+        closable: true,
+      };
+      dispatch({ type: 'ADD', window: newWin });
+    }
+    window.addEventListener('venture-os:open-chat-history', handleOpenChatHistory);
+
     return () => {
       window.removeEventListener('venture-os:fork-chat', handleFork);
       window.removeEventListener('venture-os:new-chat', handleNewChat);
       window.removeEventListener('venture-os:open-sql-console', handleOpenSqlConsole);
+      window.removeEventListener('venture-os:open-chat-history', handleOpenChatHistory);
     };
   }, [dispatch, layout.windows]);
 

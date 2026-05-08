@@ -506,6 +506,29 @@ type SaveState = { status: 'idle' | 'saving' | 'saved' | 'error'; message?: stri
 export function Credentials({ onClose, initialProviderId }: { onClose: () => void; initialProviderId?: string }) {
   const { tools, sendChatMessage } = useDashboard();
 
+  // Mirrors BottomPanel's brand gate: downstream brands (pablo-ia, jp-ai,
+  // ai-os) hide providers whose data sources they don't own — Atlassian/Jira
+  // tickets and Talend TMC are upstream-owner-only.
+  const [workspaceName, setWorkspaceName] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/workspace')
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { name?: string } | null) => { if (!cancelled && d?.name) setWorkspaceName(d.name); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const isUpstream = workspaceName === 'janus-ia' || workspaceName === null;
+  const HIDDEN_FOR_DOWNSTREAM = useMemo(() => new Set(['atlassian', 'talend']), []);
+  const visibleProviders = useMemo(
+    () => isUpstream ? PROVIDERS : PROVIDERS.filter(p => !HIDDEN_FOR_DOWNSTREAM.has(p.id)),
+    [isUpstream, HIDDEN_FOR_DOWNSTREAM]
+  );
+  const visibleDefaults = useMemo(
+    () => isUpstream ? DEFAULT_CREDENTIALS : DEFAULT_CREDENTIALS.filter(e => !HIDDEN_FOR_DOWNSTREAM.has(e.provider)),
+    [isUpstream, HIDDEN_FOR_DOWNSTREAM]
+  );
+
   // Per-field input state, keyed by field id.
   const [values, setValues] = useState<FieldValues>({});
 
@@ -563,7 +586,7 @@ export function Credentials({ onClose, initialProviderId }: { onClose: () => voi
     return () => { cancelled = true; };
   }, []);
 
-  const allEntries = useMemo(() => [...DEFAULT_CREDENTIALS, ...customEntries], [customEntries]);
+  const allEntries = useMemo(() => [...visibleDefaults, ...customEntries], [visibleDefaults, customEntries]);
 
   // Source-of-truth for "is this field set?" — the bridge reports which env
   // vars are present in its process.env (dotfiles + Codespace secrets, merged).
@@ -822,11 +845,11 @@ export function Credentials({ onClose, initialProviderId }: { onClose: () => voi
       arr.push(entry);
       byProvider.set(entry.provider, arr);
     }
-    return PROVIDERS.map(p => ({
+    return visibleProviders.map(p => ({
       provider: p,
       entries: byProvider.get(p.id) || [],
     })).filter(g => g.entries.length > 0 || g.provider.id === 'custom');
-  }, [allEntries]);
+  }, [allEntries, visibleProviders]);
 
   return (
     <div className="credentials__overlay" onClick={onClose}>
