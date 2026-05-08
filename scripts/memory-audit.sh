@@ -16,12 +16,15 @@
 
 set -uo pipefail
 
-DEFAULT_DIR="/c/Users/alejandro.salas/.claude/projects/C--Users-alejandro-salas-Documents-ASO-JanusAI-janus-ia/memory"
-MEMORY_DIR="${MEMORY_DIR:-$DEFAULT_DIR}"
+if [[ -z "${MEMORY_DIR:-}" ]]; then
+    echo "✗ MEMORY_DIR not set" >&2
+    echo "  set it to your Claude Code project memory dir, e.g.:" >&2
+    echo "    MEMORY_DIR=\"\$HOME/.claude/projects/<project-slug>/memory\" bash scripts/memory-audit.sh" >&2
+    exit 1
+fi
 
 if [[ ! -d "$MEMORY_DIR" ]]; then
     echo "✗ memory dir not found: $MEMORY_DIR" >&2
-    echo "  set MEMORY_DIR=/path/to/dir and re-run" >&2
     exit 1
 fi
 

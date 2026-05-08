@@ -21,7 +21,16 @@ export WORKSPACE_ROOT
 # Find the janus-ia dashboard regardless of where we were invoked from.
 DASH_HOME="${JANUS_DASH_HOME:-$SCRIPT_DIR}"
 DASH="$DASH_HOME/dashboard"
-PORT="${VENTURE_OS_PORT:-3100}"
+# Port: explicit VENTURE_OS_PORT wins; otherwise janus-ia uses 3100 and
+# every other brand defaults to 3101 so multiple brands can run side-by-side
+# without one clobbering another's port at the dash-level kill-stale step.
+if [ -n "${VENTURE_OS_PORT:-}" ]; then
+  PORT="$VENTURE_OS_PORT"
+elif [ "${JANUS_BRAND:-Janus IA}" = "Janus IA" ]; then
+  PORT=3100
+else
+  PORT=3101
+fi
 OPEN_BROWSER="${JANUS_OPEN_BROWSER:-0}"
 if [ "${1:-}" = "--open" ]; then
   OPEN_BROWSER=1
@@ -45,14 +54,42 @@ load_env_file() {
 #   2) ~/dotfiles/.env   — canonical dotfiles repo location (Windows + Mac).
 #   3) ~/.env            — legacy Codespace convention; loaded last so it wins.
 #
+# Per-instance opt-out: if <workspace>/.env sets JANUS_HOME_ENV=0, the dotfiles
+# and home env files are NOT loaded. This is how downstream brand instances
+# (Pablo AI, JP AI, AI OS) keep their own identity instead of inheriting Jano's
+# auth/jira/talend/github creds from the upstream user's ~/.env.
+#
 # Secrets are never read from git-tracked files. If none exist, the UI
 # first-run flow asks the user to sign in or paste their own provider keys.
 load_env_file "$WORKSPACE_ROOT/.env" "workspace .env"
-if [ "$HOME/dotfiles/.env" != "$WORKSPACE_ROOT/.env" ]; then
-  load_env_file "$HOME/dotfiles/.env" "dotfiles .env"
-fi
-if [ "$HOME/.env" != "$WORKSPACE_ROOT/.env" ] && [ "$HOME/.env" != "$HOME/dotfiles/.env" ]; then
-  load_env_file "$HOME/.env" "home .env"
+if [ "${JANUS_HOME_ENV:-1}" = "1" ]; then
+  if [ "$HOME/dotfiles/.env" != "$WORKSPACE_ROOT/.env" ]; then
+    load_env_file "$HOME/dotfiles/.env" "dotfiles .env"
+  fi
+  if [ "$HOME/.env" != "$WORKSPACE_ROOT/.env" ] && [ "$HOME/.env" != "$HOME/dotfiles/.env" ]; then
+    load_env_file "$HOME/.env" "home .env"
+  fi
+else
+  echo "• JANUS_HOME_ENV=0 — skipping dotfiles/.env and home/.env (per-instance identity mode)"
+  # Skipping the env files isn't enough: vars already in the parent shell's
+  # environment (e.g. exported in ~/.bashrc, set by the upstream Janus
+  # launcher, or inherited from CI) would still leak to the bridge. Unset
+  # the auth + provider creds so this instance starts truly empty unless
+  # workspace .env defined them.
+  for var in JANUS_AUTH_USER JANUS_AUTH_PASSWORD_HASH JANUS_AUTH_FORCE \
+             JANUS_SESSION_SECRET GITHUB_TOKEN GITHUB_TOKEN_REECE \
+             JIRA_TOKEN JIRA_HOST JIRA_USER JIRA_API_TOKEN \
+             TALEND_API_KEY TALEND_BASE_URL TALEND_REGION \
+             SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ACCESS_TOKEN SUPABASE_PROJECT_REF \
+             ANTHROPIC_API_KEY OPENAI_API_KEY GOOGLE_API_KEY VOYAGE_API_KEY \
+             BRAVE_API_KEY N8N_API_KEY N8N_BASE_URL \
+             CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID \
+             GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET GOOGLE_REFRESH_TOKEN \
+             GCAL_CREDENTIALS GMAIL_CREDENTIALS GDRIVE_CREDENTIALS; do
+    if [ -n "${!var:-}" ] && ! grep -q "^${var}=" "$WORKSPACE_ROOT/.env" 2>/dev/null; then
+      unset "$var"
+    fi
+  done
 fi
 if [ "$ENV_FILES_LOADED" != "1" ]; then
   echo "• no .env found — first-run setup will ask for this user's own credentials"

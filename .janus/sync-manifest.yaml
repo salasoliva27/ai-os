@@ -1,0 +1,137 @@
+# Janus IA → downstream sync manifest.
+#
+# Upstream: salasoliva27/janus-ia (this repo).
+# Downstreams: ai-os, pablo-ia, jp-ai (read from `.janus/downstreams.txt` or
+#   the bridge config — TBD).
+#
+# Direction is one-way: upstream commits propagate to downstreams. Downstream
+# never pushes back. The runner copies every path under `sync:` from janus-ia
+# into each downstream and commits with `chore(janus): sync from janus-ia@<sha>`.
+# Anything under `never_sync:` is left alone in the downstream — including
+# the user's projects, credentials, and instance-only state.
+#
+# Edit this file to flip a path between sync/never.
+#
+# Sync philosophy: only generic, brand-agnostic infrastructure that enhances
+# the AI's *capability* (the dashboard, MCP code, launchers, lifecycle hooks)
+# propagates downstream. Anything that carries Jano's voice, project
+# portfolio, accumulated learnings, or Mexico/CDMX-specific business context
+# stays in janus-ia. Each downstream owner builds their own brain content
+# (agents, concepts, learnings, skills) from the ground up — they only inherit
+# the *runtime* from upstream, not the knowledge.
+#
+# Phase 2 (not yet done): the synced infra files still contain "Jano" and
+# specific project names in user-facing strings (preflight.sh, correction-
+# reminder.sh, install-launcher.sh, mcp-servers/memory/index.js docstrings,
+# .claude/settings.json hardcoded path). Generalize those upstream before the
+# next sync to make Pablo AI / JP AI / AI OS truly white-label.
+
+sync:
+  # ── Dashboard + bridge ─────────────────────────────────────
+  - dashboard/             # entire dashboard (frontend + bridge + bin)
+
+  # ── MCP server *code* (config goes via .mcp.json — never sync) ──
+  - mcp-servers/
+
+  # ── Launcher infrastructure (brand-parameterized via JANUS_BRAND) ──
+  - dash                   # main entry shell script
+  - bin/                   # `bin/dashboard` launcher
+  - install.cmd
+  - install-desktop.cmd    # brand-agnostic — discovers the .cmd in repo root
+  - install-desktop.command
+
+  # ── Session protocol / hooks (generic lifecycle wiring) ────
+  - .claude/               # session enforcement, hook configs
+  - scripts/               # preflight, stop-gate, helpers
+                           # NOTE: scripts/sync-downstreams.sh and
+                           #       scripts/memory-audit.sh contain personal
+                           #       paths/owner refs — fix upstream before
+                           #       the next sync, or downstreams inherit them
+
+  # ── Structural docs (about how the system works) ───────────
+  - docs/launchers.md
+  - docs/how-to-add-product.md
+
+  # ── Sync rules themselves (so downstreams see the same filter) ──
+  - .janus/sync-manifest.yaml
+
+  # ── Onboarding (brand-agnostic; every instance auto-runs /onboard
+  #    on first launch — see dashboard ChatPanel + WindowShell gate).
+  #    These four files are zero-personal-ref by design; they describe a
+  #    generic interview that PRODUCES per-instance brain content. They
+  #    must propagate even though their parent dirs are in never_sync.
+  - commands/onboard.md
+  - agents/core/onboarding.md
+  - concepts/onboarding.md
+  - concepts/onboarding-interview.md
+
+  # ── Repo hygiene ────────────────────────────────────────────
+  - .gitignore             # downstreams need the same ignores
+
+never_sync:
+  # ── Brain content (per-instance; carries owner voice + portfolio) ──
+  # Each downstream owner authors their own. Syncing Jano's brain into
+  # Pablo AI / JP AI / AI OS would overwrite their context.
+  - agents/                # all 15 core agents reference Jano + named projects
+  - concepts/              # mostly Mexico/CDMX-specific business strategy
+  - learnings/             # accumulated personal knowledge
+  - skills/                # registry tagged with JANO-RECOMMENDED + project assignments
+  - modules/               # performance + validation modules name Jano + projects
+  - commands/              # evolve.md and onboard.md are Jano-centric
+
+  # ── Tools registry / brain-viewer (personal accounts + repo refs) ──
+  - tools/                 # registry.md has GOOGLE_CLIENT_ID instructions tied to
+                           # Jano's GCP project; brain-viewer references
+                           # salasoliva27/* repos by name
+
+  # ── Per-instance setup docs ─────────────────────────────────
+  - docs/laptop-setup.md   # hardcodes salasoliva27/dotfiles + janus-ia URLs
+
+  # ── User's project portfolio (each instance has its own) ───
+  - wiki/                  # user's project status notes
+  - projects/              # user's project clones / symlinks
+  - portfolio/             # personal portfolio README
+  - PROJECTS.md            # user's project list
+  - PORTFOLIO-MAP.md       # user's portfolio map
+  - finances/              # personal financial tracking
+
+  # ── Per-instance narrative docs (each user's voice + portfolio) ──
+  # These reference the OWNER (Jano / Pablo / JP) and their projects;
+  # syncing them across instances would overwrite each downstream's
+  # personalized context. Each instance owns its own copy.
+  - AGENTS.md              # per-user agent registry + brain narrative
+  - CLAUDE.md              # per-user Claude Code adapter + portfolio context
+  - README.md              # per-instance landing page
+  - TOOLS.md               # per-user tool inventory
+  - CHANGELOG.md           # per-instance change history
+
+  # ── Per-instance brand launcher ─────────────────────────────
+  # Each repo owns its own `<Brand>.cmd` (Janus IA.cmd / Pablo AI.cmd /
+  # JP AI.cmd / AI OS.cmd). The shared launcher logic lives in `dash`
+  # which IS synced; the .cmd is just a thin brand-named wrapper.
+  # The protection here is implicit: removed from `sync:` means the
+  # sync runner never copies it. (Glob patterns are NOT supported by
+  # the current sync runner — it does literal-path matching only.)
+  - "Janus IA.cmd"         # historical brand name, owned by janus-ia only
+
+  # ── Per-instance state ──────────────────────────────────────
+  - .planning/             # local AI planning artifacts
+  - dump/                  # uploads
+  - outputs/               # instance-generated outputs
+  - .janus/status.md       # generated per-instance from each instance's wiki
+
+  # ── Local dev environment ──────────────────────────────────
+  - .vscode/
+  - .devcontainer/
+  - .obsidian/             # local Obsidian vault config
+
+  # ── Credentials ─────────────────────────────────────────────
+  - .env
+  - .env.*
+  - .mcp.json              # contains tokens — only the schema is portable
+  - CREDENTIALS.md         # may include real values — leave per-instance
+
+  # ── Git internals ───────────────────────────────────────────
+  - .git/
+  - .gitmodules            # submodule config is per-instance
+  - snowflake.log          # transient log, shouldn't be in git anyway

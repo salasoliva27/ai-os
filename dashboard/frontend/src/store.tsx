@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
-import type { DashboardState, DashboardActions, Project, ToolStatus, BrainNode, BrainEdge, Notification, Learning, CalendarSlot, FileActivity, CenterView, BrainSource, Document, AgentInfo, MemoryEntry, SessionChatState, ChatMessage, MemoryIndex, GitPending } from './types/dashboard';
+import type { DashboardState, DashboardActions, Project, ToolStatus, BrainNode, BrainEdge, Notification, Learning, CalendarSlot, FileActivity, CenterView, BrainSource, Document, AgentInfo, MemoryEntry, SessionChatState, ChatMessage, MemoryIndex, GitPending, ConversationRecord } from './types/dashboard';
 import type { ServerMessage } from './types/bridge';
 
 // Projects are discovered at runtime from the user's GitHub repos via the
@@ -235,6 +235,136 @@ export function useDashboard() {
 
 let _idCounter = 0;
 const uid = () => `ev-${++_idCounter}-${Date.now()}`;
+const sessionUid = () => `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+// Strip the conversational wrapper around the first user message ("can you",
+// "i want to", "how do i", etc.) and surface the actual subject. Concatenates
+// the first 3 user messages so titles still work when the user warms up
+// before stating the real ask. No LLM call — pure regex, fits in archive flow.
+const TITLE_STRIPS: RegExp[] = [
+  /^(?:hey|hi|hello)[,.\s]+/i,
+  /^(?:so|now|ok|okay|alright)[,.\s]+/i,
+  /^(?:please|kindly)[,.\s]+/i,
+  /^(?:can|could|would|will|should)\s+you\s+(?:please\s+)?/i,
+  /^(?:i'?d?\s+(?:like|want|need)\s+(?:to|you\s+to)?\s+)/i,
+  /^(?:i'?m\s+(?:trying\s+to|going\s+to|looking\s+to)\s+)/i,
+  /^(?:i\s+(?:want|need|would\s+like|wanted)\s+(?:to\s+)?)/i,
+  /^(?:let'?s\s+)/i,
+  /^(?:help\s+me\s+(?:to\s+)?)/i,
+  /^(?:how\s+(?:do|to|can|should)\s+(?:i\s+|we\s+|you\s+)?)/i,
+  /^(?:what'?s?\s+(?:the\s+(?:best|right)\s+(?:way\s+)?)?(?:to|for)\s+)/i,
+  /^(?:show\s+me\s+(?:how\s+to\s+)?)/i,
+  /^(?:tell\s+me\s+(?:about\s+)?)/i,
+  /^(?:explain\s+(?:to\s+me\s+)?(?:what\s+|how\s+)?)/i,
+  /^(?:make\s+sure\s+(?:that\s+|to\s+)?)/i,
+];
+
+function inferConversationTitle(messages: ChatMessage[], fallback = 'Untitled chat'): string {
+  const userMsgs = messages.filter(m => m.role === 'user' && m.content.trim());
+  if (userMsgs.length === 0) {
+    const any = messages.find(m => m.content.trim());
+    if (!any) return fallback;
+    const t = any.content.replace(/\s+/g, ' ').trim();
+    return t.length > 60 ? `${t.slice(0, 57)}…` : t;
+  }
+  let raw = userMsgs.slice(0, 3).map(m => m.content).join(' ');
+  raw = raw.replace(/\[User attached[\s\S]*?\]\n?/g, '').replace(/\s+/g, ' ').trim();
+  let title = raw;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const re of TITLE_STRIPS) {
+      const next = title.replace(re, '');
+      if (next !== title) { title = next; changed = true; break; }
+    }
+  }
+  title = title.replace(/[?!.]+$/g, '').trim();
+  const firstSentence = title.split(/(?:[.!?]\s+)/)[0] || title;
+  const TARGET = 60;
+  let result = firstSentence;
+  if (result.length > TARGET) {
+    const trunc = result.slice(0, TARGET);
+    const lastSpace = trunc.lastIndexOf(' ');
+    result = (lastSpace > 30 ? trunc.slice(0, lastSpace) : trunc) + '…';
+  }
+  if (result.length > 0) result = result.charAt(0).toUpperCase() + result.slice(1);
+  return result || fallback;
+}
+
+function previewConversation(messages: ChatMessage[]): string {
+  const text = messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .slice(-4)
+    .map(m => `${m.role}: ${m.content}`)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > 180 ? `${text.slice(0, 177)}...` : text;
+}
+
+function conversationRecord(
+  sessionId: string,
+  session: SessionChatState,
+  reason: ConversationRecord['reason'],
+): ConversationRecord | null {
+  if (!session.messages.some(m => m.role === 'user' || m.role === 'assistant')) return null;
+  const firstTs = session.messages[0]?.timestamp || Date.now();
+  const lastTs = session.messages[session.messages.length - 1]?.timestamp || firstTs;
+  const isEnded = reason !== 'active' && reason !== 'snapshot';
+  return {
+    id: isEnded ? `${sessionId}-${reason}-${lastTs}` : sessionId,
+    sessionId,
+    title: inferConversationTitle(session.messages, session.rootLabel ? `Chat ${session.rootLabel}` : 'Untitled chat'),
+    rootLabel: session.rootLabel,
+    createdAt: firstTs,
+    updatedAt: lastTs,
+    endedAt: isEnded ? Date.now() : undefined,
+    reason,
+    messages: session.messages,
+    preview: previewConversation(session.messages),
+  };
+}
+
+function mergeConversationHistory(history: ConversationRecord[], records: Array<ConversationRecord | null>): ConversationRecord[] {
+  const map = new Map(history.map(r => [r.id, r]));
+  for (const record of records) {
+    if (!record) continue;
+    const previous = map.get(record.id);
+    map.set(record.id, { ...previous, ...record });
+  }
+  return Array.from(map.values())
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 250);
+}
+
+function archiveAndMerge(history: ConversationRecord[], records: Array<ConversationRecord | null>): ConversationRecord[] {
+  postArchiveToBridge(records);
+  return mergeConversationHistory(history, records);
+}
+
+// Write-through to /api/chat/archive (Supabase) on every archive event.
+// Batches within 1.5s so active-message updates don't hammer the bridge —
+// PostgREST upserts on `id`, so the latest record for a session always wins.
+// Fire-and-forget: failures are swallowed so chats never block on the network.
+const archiveQueue = new Map<string, ConversationRecord>();
+let archiveTimer: ReturnType<typeof setTimeout> | null = null;
+function postArchiveToBridge(records: Array<ConversationRecord | null>): void {
+  for (const r of records) {
+    if (r && r.id) archiveQueue.set(r.id, r);
+  }
+  if (archiveTimer || archiveQueue.size === 0) return;
+  archiveTimer = setTimeout(() => {
+    archiveTimer = null;
+    const batch = Array.from(archiveQueue.values());
+    archiveQueue.clear();
+    if (batch.length === 0) return;
+    fetch('/api/chat/archive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ records: batch }),
+    }).catch(() => { /* offline-tolerant; localStorage still has it */ });
+  }, 1500);
+}
 
 // ── Per-session chat helpers ────────────────────────────
 
@@ -313,15 +443,27 @@ const LEGACY_STORAGE_KEY = 'venture-os-session';
 const MAX_SAVED_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days — hard ceiling to bound localStorage growth
 
 function cleanSessionForPersist(s: SessionChatState): SessionChatState {
+  const messages = s.messages.map(m => ({
+    ...m,
+    attachments: m.attachments?.map(a => (
+      a.language === 'image' && a.url
+        ? { ...a, content: '' }
+        : a
+    )),
+  }));
   // Don't persist transient status — reload should always return to a stable idle state
   return {
-    messages: s.messages,
+    messages,
     thinking: false,
     status: s.status === 'thinking' || s.status === 'streaming' || s.status === 'disconnected' ? 'done' : s.status,
     thinkingStart: null,
     lastActivityAt: null,
     inflightTokens: null,
     siblingUpdates: s.siblingUpdates.slice(0, 5),
+    agentId: s.agentId,
+    modelId: s.modelId,
+    rootSessionId: s.rootSessionId,
+    rootLabel: s.rootLabel,
   };
 }
 
@@ -356,7 +498,37 @@ function loadPersistedState(): Partial<DashboardState> | null {
     }
     const saved = JSON.parse(raw);
     if (saved._savedAt && Date.now() - saved._savedAt > MAX_SAVED_AGE_MS) return null;
-    return saved;
+    // Restore active chat sessions verbatim across UI reloads. A page
+    // refresh, dashboard rebuild, or accidental tab close shouldn't kill
+    // the conversation the user is in -- only the explicit boundaries
+    // (new chat, restart, fork) end a conversation. Earlier this reducer
+    // archived every session as `ui_restart` on load, which made
+    // browser-reload feel destructive; the user reversed that decision.
+    const previousSessions = saved.chatSessions as Record<string, SessionChatState> | undefined;
+    const previousHistory = (saved.conversationHistory as ConversationRecord[]) || [];
+    // Reset transient runtime state -- a session that was mid-stream when
+    // the tab closed should come back in the idle state, not stuck on
+    // 'thinking' with a half-finished assistant message.
+    const restoredSessions: Record<string, SessionChatState> = {};
+    if (previousSessions) {
+      for (const [sid, s] of Object.entries(previousSessions)) {
+        restoredSessions[sid] = {
+          ...s,
+          thinking: false,
+          status: 'done',
+          thinkingStart: null,
+          lastActivityAt: null,
+          inflightTokens: null,
+          siblingUpdates: s.siblingUpdates ?? [],
+        };
+      }
+    }
+    return {
+      ...saved,
+      chatSessions: restoredSessions,
+      chatMessages: undefined,
+      conversationHistory: previousHistory,
+    };
   } catch { return null; }
 }
 function persistState(s: DashboardState) {
@@ -365,8 +537,11 @@ function persistState(s: DashboardState) {
     for (const [sid, session] of Object.entries(s.chatSessions)) {
       cleanedSessions[sid] = cleanSessionForPersist(session);
     }
+    const currentRecords = Object.entries(cleanedSessions)
+      .map(([sid, session]) => conversationRecord(sid, session, 'active'));
     const toSave = {
       chatSessions: cleanedSessions,
+      conversationHistory: archiveAndMerge(s.conversationHistory, currentRecords),
       chatAuth: s.chatAuth,
       memories: s.memories,
       sessionEvents: s.sessionEvents.slice(0, 30),
@@ -413,6 +588,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       fileActivities: makeFileActivities(),
       documents: (p?.documents as any[]) || [],
       uploadedDocuments: [],
+      conversationHistory: (p?.conversationHistory as ConversationRecord[]) || [],
       selectedProject: null,
       selectedBrainNode: null,
       centerView: 'constellation',
@@ -460,6 +636,27 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => persistState(state), 500);
   }, [state]);
+
+  // ── Hydrate chat history from the Supabase write-through. localStorage is
+  // the local cache; this fetch pulls in any conversations archived from
+  // other browsers/devices/sessions and merges them. Failure-mode: keep
+  // local-only history. Skip the bridge round-trip on Supabase miss.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/chat/history?limit=500');
+        if (!r.ok) return;
+        const d = await r.json() as { records?: ConversationRecord[]; supabase?: boolean };
+        if (cancelled || !d?.supabase || !Array.isArray(d.records) || d.records.length === 0) return;
+        setState(s => ({
+          ...s,
+          conversationHistory: mergeConversationHistory(s.conversationHistory, d.records!),
+        }));
+      } catch { /* keep localStorage-only history */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // ── On mount: clear seeded NOTIFICATIONS/LEARNINGS in non-janus-ia forks.
   // Projects are now empty by default and populated via the `projects_set`
@@ -779,6 +976,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
           let documents = s.documents;
           let activeDocumentId = s.activeDocumentId;
           let rightPanelTab = s.rightPanelTab;
+          const documentCards: ChatMessage[] = [];
 
           if (input && (msg.toolName === 'Write' || msg.toolName === 'Edit')) {
             const filePath = (input.file_path || input.path || '') as string;
@@ -797,15 +995,22 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
               }
               activeDocumentId = docId;
               rightPanelTab = 'documents';
+              documentCards.push({
+                id: uid(),
+                role: 'system',
+                content: `Document ready: ${filename}`,
+                timestamp: Date.now(),
+                attachments: [doc],
+              });
             }
           }
 
           // Append memory pulses to the originating session's chat stream
           let chatSessions = s.chatSessions;
-          if (memoryPulses.length > 0) {
+          if (memoryPulses.length > 0 || documentCards.length > 0) {
             const pulseSid = (msg as any).sessionId || DEFAULT_SESSION;
             chatSessions = updateSession(chatSessions, pulseSid, ss => ({
-              ...ss, messages: [...ss.messages, ...memoryPulses],
+              ...ss, messages: [...ss.messages, ...memoryPulses, ...documentCards],
             }));
           }
 
@@ -813,7 +1018,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             ...s, tools, terminalLines, sessionEvents, brainEdges, memories, learnings,
             documents, activeDocumentId, rightPanelTab, agentCounts, projectCounts,
             chatSessions,
-            ...(memoryPulses.length > 0 ? deriveLegacy(chatSessions) : {}),
+            ...(memoryPulses.length > 0 || documentCards.length > 0 ? deriveLegacy(chatSessions) : {}),
           };
         });
 
@@ -972,7 +1177,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
               ? [...ss.messages, { id: uid(), role: 'assistant' as const, content: text, timestamp: Date.now() }]
               : ss.messages,
           }));
-          return { ...s, chatSessions, ...deriveLegacy(chatSessions) };
+          return {
+            ...s,
+            chatSessions,
+            conversationHistory: archiveAndMerge(s.conversationHistory, [conversationRecord(sid, chatSessions[sid], 'active')]),
+            ...deriveLegacy(chatSessions),
+          };
         });
         break;
       }
@@ -1023,12 +1233,14 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
             }
             return {
               ...s, chatSessions: updated,
+              conversationHistory: archiveAndMerge(s.conversationHistory, [conversationRecord(sid, updated[sid], 'active')]),
               terminalLines: [...s.terminalLines, `[session:${sid}] turn complete`].slice(-100),
               ...deriveLegacy(updated),
             };
           }
           return {
             ...s, chatSessions,
+            conversationHistory: archiveAndMerge(s.conversationHistory, [conversationRecord(sid, chatSessions[sid], 'active')]),
             terminalLines: [...s.terminalLines, `[session:${sid}] turn complete`].slice(-100),
             ...deriveLegacy(chatSessions),
           };
@@ -1170,29 +1382,36 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     };
   }, [toggleCommandPalette, toggleScoreboard]);
 
-  const sendChatMessage = useCallback((content: string, sessionId: string = DEFAULT_SESSION) => {
-    if (!content.trim()) return;
+  const sendChatMessage = useCallback((content: string, sessionId: string = DEFAULT_SESSION, attachments: Document[] = [], opts?: { hidden?: boolean }): boolean => {
+    if (!content.trim()) return false;
     const trimmed = content.trim();
     const sid = sessionId;
+    const hidden = opts?.hidden === true;
 
     // If editing, truncate from the edit point first, then add the new message
     const editIdx = editingFromIdx.current;
     editingFromIdx.current = null;
 
-    const userMsg: ChatMessage = { id: uid(), role: 'user', content: trimmed, timestamp: Date.now() };
+    const userMsg: ChatMessage = { id: uid(), role: 'user', content: trimmed, timestamp: Date.now(), attachments };
 
     setState(s => {
       const chatSessions = updateSession(s.chatSessions, sid, ss => {
         const base = editIdx !== null ? ss.messages.slice(0, editIdx) : ss.messages;
         return {
           ...ss,
-          messages: [...base, userMsg],
+          messages: hidden ? base : [...base, userMsg],
           status: editIdx !== null ? 'idle' as const : ss.status,
           thinking: editIdx !== null ? false : ss.thinking,
           thinkingStart: editIdx !== null ? null : ss.thinkingStart,
         };
       });
-      return { ...s, chatSessions, chatInput: '', ...deriveLegacy(chatSessions) };
+      return {
+        ...s,
+        chatSessions,
+        chatInput: '',
+        conversationHistory: archiveAndMerge(s.conversationHistory, [conversationRecord(sid, chatSessions[sid], 'active')]),
+        ...deriveLegacy(chatSessions),
+      };
     });
 
     // Reset session when editing so next response starts fresh
@@ -1221,20 +1440,22 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }));
         return { ...s, tools, chatSessions, ...deriveLegacy(chatSessions) };
       });
-      return;
+      return false;
     }
 
     // Everything else → send through bridge WebSocket as an active engine session
     const send = wsSendRef.current;
     if (!send) {
-      setState(s => {
-        const sysMsg: ChatMessage = { id: uid(), role: 'system', content: 'Bridge not connected. Waiting for connection...', timestamp: Date.now() };
-        const chatSessions = updateSession(s.chatSessions, sid, ss => ({
-          ...ss, messages: [...ss.messages, sysMsg],
-        }));
-        return { ...s, chatSessions, ...deriveLegacy(chatSessions) };
-      });
-      return;
+      if (!hidden) {
+        setState(s => {
+          const sysMsg: ChatMessage = { id: uid(), role: 'system', content: 'Bridge not connected. Waiting for connection...', timestamp: Date.now() };
+          const chatSessions = updateSession(s.chatSessions, sid, ss => ({
+            ...ss, messages: [...ss.messages, sysMsg],
+          }));
+          return { ...s, chatSessions, ...deriveLegacy(chatSessions) };
+        });
+      }
+      return false;
     }
 
     // Message interruption: if agent is mid-response, interrupt and re-inject
@@ -1265,7 +1486,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         }));
         return { ...s, chatSessions, ...deriveLegacy(chatSessions) };
       });
-      return;
+      return true;
     }
 
     setState(s => {
@@ -1301,6 +1522,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     } else {
       send({ type: 'follow_up', prompt: trimmed, sessionId: sid, agentId, modelId });
     }
+    return true;
   }, [state.chatSessions]);
 
   // Called by App.tsx when the WebSocket transitions to 'disconnected'.
@@ -1443,7 +1665,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [state.chatSessions]);
 
   const forkChat = useCallback((parentSessionId: string, label: string): string => {
-    const newSessionId = `session-${Date.now()}`;
+    const newSessionId = sessionUid();
     const send = wsSendRef.current;
 
     // Copy parent messages as fork context
@@ -1464,17 +1686,22 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
     const rootLabel = parentSession.rootLabel;
 
     setState(s => {
+      const forkSession = emptySessionChat({
+        messages: [...parentSession.messages, forkNote],
+        agentId: parentSession.agentId,
+        modelId: parentSession.modelId,
+        rootSessionId,
+        rootLabel,
+      });
       const chatSessions = {
         ...s.chatSessions,
-        [newSessionId]: emptySessionChat({
-          messages: [...parentSession.messages, forkNote],
-          agentId: parentSession.agentId,
-          modelId: parentSession.modelId,
-          rootSessionId,
-          rootLabel,
-        }),
+        [newSessionId]: forkSession,
       };
-      return { ...s, chatSessions };
+      return {
+        ...s,
+        chatSessions,
+        conversationHistory: archiveAndMerge(s.conversationHistory, [conversationRecord(newSessionId, forkSession, 'fork')]),
+      };
     });
 
     if (send) {
@@ -1504,7 +1731,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
   }, [state.chatSessions]);
 
   const newChat = useCallback((opts?: { agentId?: string; modelId?: string; label?: string }): string => {
-    const newSessionId = `session-${Date.now()}`;
+    const newSessionId = sessionUid();
     const fallbackAgent = localStorage.getItem('venture-os-agent') || 'claude';
     const agentId = opts?.agentId || fallbackAgent;
     const fallbackModel = localStorage.getItem(`venture-os-model-${agentId}`) || undefined;
@@ -1553,6 +1780,7 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
       if (!existing) return s;
       const agentId = existing.agentId || localStorage.getItem('venture-os-agent') || 'claude';
       const modelId = existing.modelId;
+      const archived = conversationRecord(sessionId, existing, 'restart');
       const chatSessions = updateSession(s.chatSessions, sessionId, ss => ({
         ...ss,
         // Wipe conversation + transient runtime state. Keep identity
@@ -1571,7 +1799,12 @@ export function DashboardProvider({ children }: { children: ReactNode }) {
         inflightTokens: null,
         siblingUpdates: [],
       }));
-      return { ...s, chatSessions, ...deriveLegacy(chatSessions) };
+      return {
+        ...s,
+        chatSessions,
+        conversationHistory: archiveAndMerge(s.conversationHistory, [archived]),
+        ...deriveLegacy(chatSessions),
+      };
     });
     if (send) send({ type: 'restart_session', sessionId });
   }, []);

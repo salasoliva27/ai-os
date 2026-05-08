@@ -213,7 +213,7 @@ export function Window({ state, children }: WindowProps) {
 
   if (state.minimized || !state.visible) return null;
 
-  const lineageLabel = state.lineage
+  const lineageLabel = state.lineage && state.lineage.depth > 0
     ? `L${state.lineage.depth} · ${state.lineage.breadcrumb.join(' > ')}`
     : null;
 

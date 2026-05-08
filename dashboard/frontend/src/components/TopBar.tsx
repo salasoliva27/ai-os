@@ -543,6 +543,13 @@ function ContextUsage() {
 function GitPendingBadge({ pending }: { pending: GitPending | null }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  // Anchor the popover to the button's viewport coords so we can render it
+  // with `position: fixed` — `position: absolute` from inside the TopBar
+  // ended up underneath the floating windows in `.shell-panels` despite a
+  // high z-index, because each .wm-window establishes its own stacking
+  // context. Fixed positioning keeps the dropdown in the top-level layer.
+  const [anchor, setAnchor] = useState<{ top: number; left: number } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -551,6 +558,21 @@ function GitPendingBadge({ pending }: { pending: GitPending | null }) {
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || !btnRef.current) return;
+    const update = () => {
+      const r = btnRef.current!.getBoundingClientRect();
+      setAnchor({ top: r.bottom + 6, left: r.left });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
   }, [open]);
 
   if (!pending) {
@@ -563,7 +585,14 @@ function GitPendingBadge({ pending }: { pending: GitPending | null }) {
 
   const total = pending.total;
   const isClean = total === 0;
-  const label = isClean ? 'clean' : `${total} pending`;
+  const action = isClean
+    ? 'synced'
+    : pending.uncommitted.length > 0 && pending.unpushed.length > 0
+      ? 'commit + push'
+      : pending.uncommitted.length > 0
+        ? 'commit'
+        : 'push';
+  const label = isClean ? 'GitHub synced' : `${action}: ${total}`;
   const titleParts = [
     `${pending.uncommitted.length} uncommitted`,
     `${pending.unpushed.length} unpushed`,
@@ -573,10 +602,13 @@ function GitPendingBadge({ pending }: { pending: GitPending | null }) {
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => { if (!isClean) setOpen(o => !o); }}
         title={titleParts.join(' · ')}
         style={{
+          display: 'inline-flex',
+          alignItems: 'center',
           background: isClean ? 'transparent' : 'var(--color-accent)',
           color: isClean ? 'var(--color-text-muted)' : 'var(--color-text-on-accent)',
           border: isClean ? '1px solid var(--border-color)' : 'none',
@@ -589,14 +621,17 @@ function GitPendingBadge({ pending }: { pending: GitPending | null }) {
           letterSpacing: '0.02em',
         }}
       >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style={{ marginRight: 5, verticalAlign: '-2px' }}>
+          <path d="M8 0C3.58 0 0 3.67 0 8.2c0 3.62 2.29 6.69 5.47 7.77.4.08.55-.18.55-.4 0-.2-.01-.87-.01-1.58-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.96-.82-1.15-.28-.16-.68-.55-.01-.56.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.53.28-.89.51-1.09-1.78-.21-3.64-.91-3.64-4.04 0-.89.31-1.62.82-2.19-.08-.21-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.4 7.4 0 0 1 8 3.93c.68 0 1.36.09 2 .27 1.53-1.06 2.2-.84 2.2-.84.44 1.12.16 1.95.08 2.16.51.57.82 1.3.82 2.19 0 3.14-1.87 3.83-3.65 4.04.29.26.54.76.54 1.54 0 1.11-.01 2-.01 2.28 0 .22.15.48.55.4A8.12 8.12 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z" />
+        </svg>
         {label}
       </button>
-      {open && !isClean && (
+      {open && !isClean && anchor && (
         <div
           style={{
-            position: 'absolute',
-            top: 'calc(100% + 6px)',
-            left: 0,
+            position: 'fixed',
+            top: anchor.top,
+            left: anchor.left,
             background: 'var(--color-bg-elevated)',
             border: '1px solid var(--border-color)',
             borderRadius: 6,
@@ -607,7 +642,8 @@ function GitPendingBadge({ pending }: { pending: GitPending | null }) {
             overflowY: 'auto',
             fontFamily: 'var(--font-family-mono)',
             fontSize: 11,
-            zIndex: 1000,
+            zIndex: 9999,
+            boxShadow: 'var(--shadow-lg)',
           }}
         >
           {pending.branch && (
@@ -667,6 +703,7 @@ export function TopBar({ connectionStatus, onThemeToggle, lastMessage, onCredent
         <img className="top-bar__brand-logo" src={theme.logo} alt={`${theme.name} logo`} />
       )}
       <div className="top-bar__git-lanes">
+        <GitPendingBadge pending={gitPending} />
         {Array.from(repoCommits.entries()).slice(0, 5).map(([repo, commit]) => (
           <div key={repo} className="top-bar__git-lane">
             <div className="top-bar__git-dot" style={{ background: commit.repoColor }} />
@@ -674,9 +711,6 @@ export function TopBar({ connectionStatus, onThemeToggle, lastMessage, onCredent
             <span className="top-bar__git-msg">{commit.message}</span>
           </div>
         ))}
-        {repoCommits.size === 0 && (
-          <GitPendingBadge pending={gitPending} />
-        )}
       </div>
       <ContextUsage />
       <div className="top-bar__right">

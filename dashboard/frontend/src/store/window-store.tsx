@@ -205,6 +205,37 @@ function windowReducer(state: WindowLayout, action: WindowAction): WindowLayout 
 
 // ── Persistence ──
 
+// Window IDs that must always exist. If any of these are missing from the
+// persisted layout (e.g. because the user closed-and-purged them, or because
+// an older version of the dashboard wrote a partial layout), we merge them
+// back in from defaults — otherwise the dashboard launches with the chat or
+// context panel invisible and there's no obvious way to recover.
+const CORE_WINDOW_IDS = ['win-chat', 'win-center', 'win-bottom', 'win-right'];
+
+function mergeMissingCoreWindows(saved: WindowLayout): WindowLayout {
+  const fallback = defaultLayout();
+  const havingIds = new Set(saved.windows.map(w => w.id));
+  const missing = fallback.windows.filter(w => !havingIds.has(w.id));
+  if (missing.length === 0) {
+    // All core windows present — but make sure at least one is *visible*.
+    // If the user managed to hide every persistent window, restore them.
+    const anyVisible = saved.windows.some(w => CORE_WINDOW_IDS.includes(w.id) && w.visible !== false);
+    if (anyVisible) return saved;
+    return {
+      ...saved,
+      windows: saved.windows.map(w =>
+        CORE_WINDOW_IDS.includes(w.id)
+          ? { ...w, visible: true, minimized: false }
+          : w,
+      ),
+    };
+  }
+  return {
+    nextZIndex: Math.max(saved.nextZIndex, fallback.nextZIndex),
+    windows: [...saved.windows, ...missing],
+  };
+}
+
 function loadLayout(): WindowLayout {
   // Clear all old keys
   try {
@@ -217,8 +248,8 @@ function loadLayout(): WindowLayout {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw) as WindowLayout;
-      if (parsed.windows?.length > 0) {
-        return parsed;
+      if (parsed && Array.isArray(parsed.windows) && parsed.windows.length > 0) {
+        return mergeMissingCoreWindows(parsed);
       }
     }
   } catch { /* fall through */ }
