@@ -29,6 +29,16 @@ import crypto from "node:crypto";
 
 const AUTH_USER = process.env.JANUS_AUTH_USER ?? "";
 const AUTH_HASH = process.env.JANUS_AUTH_PASSWORD_HASH ?? "";
+const BRAND = process.env.JANUS_BRAND || "Janus IA";
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    c === "&" ? "&amp;" :
+    c === "<" ? "&lt;" :
+    c === ">" ? "&gt;" :
+    c === '"' ? "&quot;" : "&#39;"
+  );
+}
 const SESSION_SECRET =
   process.env.JANUS_SESSION_SECRET || crypto.randomBytes(32).toString("hex");
 const IN_CODESPACE = process.env.CODESPACES === "true";
@@ -63,7 +73,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a0a0a">
-  <title>Janus IA — Sign in</title>
+  <title>__BRAND__ — Sign in</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; }
     body {
@@ -96,7 +106,7 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <form method="POST" action="/login" class="card" autocomplete="on">
-    <h1>Janus IA</h1>
+    <h1>__BRAND__</h1>
     <div class="sub">Sign in to your dashboard</div>
     <div class="err">__ERR__</div>
     <div class="field">
@@ -113,7 +123,9 @@ const LOGIN_HTML = `<!DOCTYPE html>
 </html>`;
 
 function loginPage(error?: string): string {
-  return LOGIN_HTML.replace("__ERR__", error ?? "");
+  return LOGIN_HTML
+    .replace(/__BRAND__/g, escapeHtml(BRAND))
+    .replace("__ERR__", error ?? "");
 }
 
 interface AuthHandle {

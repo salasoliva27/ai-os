@@ -1,5 +1,18 @@
+import { useEffect, useState } from 'react';
 import { useWindowManager } from '../store/window-store';
+import { useDashboard } from '../store';
 import { VersionBadge } from './VersionBadge';
+
+function useBrand(): string {
+  const [brand, setBrand] = useState<string>(() => document.title || 'JANUS');
+  useEffect(() => {
+    fetch('/api/brand')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.brand) setBrand(d.brand); })
+      .catch(() => {});
+  }, []);
+  return brand.toUpperCase();
+}
 
 const TYPE_ICONS: Record<string, string> = {
   chat: '>',
@@ -8,10 +21,13 @@ const TYPE_ICONS: Record<string, string> = {
   right: '=',
   calendar: '#',
   'sql-console': '$',
+  'chat-history': 'H',
 };
 
 export function Taskbar() {
   const { layout, dispatch } = useWindowManager();
+  const { newChat } = useDashboard();
+  const brand = useBrand();
 
   const open = layout.windows.filter(w => w.visible && !w.minimized);
   const minimized = layout.windows.filter(w => w.visible && w.minimized);
@@ -29,7 +45,7 @@ export function Taskbar() {
           >
             <span className="wm-taskbar__icon">{TYPE_ICONS[w.type] || '?'}</span>
             <span className="wm-taskbar__label">{w.title}</span>
-            {w.lineage && (
+            {w.lineage && w.lineage.depth > 0 && (
               <span className="wm-taskbar__depth" style={{ background: w.lineage.color }}>
                 L{w.lineage.depth}
               </span>
@@ -73,11 +89,25 @@ export function Taskbar() {
             <span className="wm-taskbar__label">{w.title}</span>
           </button>
         ))}
+        <button
+          className="wm-taskbar__new-chat"
+          onClick={() => newChat()}
+          title="Start a new independent conversation"
+        >
+          + new chat
+        </button>
       </div>
-      <div className="wm-taskbar__janus-wordmark" aria-label="JANUS">
-        <span className="janus-wordmark__text">JANUS</span>
+      <div className="wm-taskbar__janus-wordmark" aria-label={brand}>
+        <span className="janus-wordmark__text">{brand}</span>
       </div>
       <div className="wm-taskbar__actions">
+        <button
+          className="wm-taskbar__history"
+          onClick={() => window.dispatchEvent(new CustomEvent('venture-os:open-chat-history'))}
+          title="Open searchable chat history"
+        >
+          History
+        </button>
         <VersionBadge />
         <button
           className="wm-taskbar__reset"
